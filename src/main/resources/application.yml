@@ -1,0 +1,29 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: legal-analyzer
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 25MB
+      max-request-size: 25MB
+
+# Configurações específicas da aplicação (ver AppProperties.java)
+legal-analyzer:
+  ai:
+    api-key: ${ANTHROPIC_API_KEY:}
+    model: ${ANTHROPIC_MODEL:claude-sonnet-5}
+    base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com/v1/messages}
+    max-tokens: ${ANTHROPIC_MAX_TOKENS:4096}
+    temperature: ${ANTHROPIC_TEMPERATURE:0.2}
+    timeout-seconds: ${ANTHROPIC_TIMEOUT_SECONDS:120}
+  pdf:
+    max-file-size-bytes: 26214400      # 25MB
+    chunk-char-size: 45000             # ~ tamanho de trecho enviado por chamada de IA
+    chunk-overlap-chars: 2000          # sobreposição entre trechos para não perder contexto
+
+logging:
+  level:
+    com.rafaelvianna.legalanalyzer: INFO
