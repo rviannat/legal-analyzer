@@ -1,10 +1,31 @@
 # Copie este arquivo de referência de variáveis de ambiente para configurar
 # a aplicação. As mesmas chaves em application.yml já leem estas variáveis
-# de ambiente automaticamente (ex.: ${ANTHROPIC_API_KEY:}).
+# de ambiente automaticamente (ex.: ${OLLAMA_MODEL:llama3.1:8b}).
 #
-#   export ANTHROPIC_API_KEY="sk-ant-..."
-#   export ANTHROPIC_MODEL="claude-sonnet-5"
-#   export ANTHROPIC_BASE_URL="https://api.anthropic.com/v1/messages"
-#   export ANTHROPIC_MAX_TOKENS="4096"
-#   export ANTHROPIC_TEMPERATURE="0.2"
-#   export ANTHROPIC_TIMEOUT_SECONDS="120"
+# --- Padrão: Ollama (modelo local, nenhum dado sai da máquina) ---
+#
+#   export AI_PROVIDER="ollama"
+#   export OLLAMA_MODEL="llama3.1:8b"
+#   export OLLAMA_BASE_URL="http://localhost:11434/api/chat"
+#   export OLLAMA_MAX_TOKENS="4096"
+#   export OLLAMA_TEMPERATURE="0.2"
+#   export OLLAMA_TIMEOUT_SECONDS="600"
+#   export OLLAMA_CONTEXT_WINDOW="16384"
+#   export OLLAMA_JSON_MODE="true"
+#   export OLLAMA_KEEP_ALIVE="30m"
+#   export OLLAMA_API_KEY=""            # só se o Ollama estiver atrás de proxy com bearer token
+#
+# --- Alternativa: Anthropic (Claude) ---
+#
+#   export AI_PROVIDER="anthropic"
+#   export OLLAMA_API_KEY="sk-ant-..."   # a chave é lida da mesma propriedade legal-analyzer.ai.api-key
+#   export OLLAMA_MODEL="claude-sonnet-4-5"
+#   export OLLAMA_BASE_URL="https://api.anthropic.com/v1/messages"
+#
+# Para deixar mais claro ao usar Anthropic, você também pode sobrescrever
+# diretamente as propriedades Spring:
+#
+#   --legal-analyzer.ai.provider=anthropic \
+#   --legal-analyzer.ai.api-key=sk-ant-... \
+#   --legal-analyzer.ai.model=claude-sonnet-4-5 \
+#   --legal-analyzer.ai.base-url=https://api.anthropic.com/v1/messages

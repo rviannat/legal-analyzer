@@ -1,8 +1,9 @@
 # Legal Analyzer — Análise Jurídica de Processos com Agentes de IA
 
 Backend em **Java 17 + Spring Boot 3** que recebe um PDF de processo/documentos
-jurídicos, extrai o texto, e usa uma **pipeline de agentes de IA** (Claude, via
-API da Anthropic) para produzir uma análise estruturada completa.
+jurídicos, extrai o texto, e usa uma **pipeline de agentes de IA** (por padrão
+**Ollama**, rodando um modelo local — nenhum documento sai da sua máquina) para
+produzir uma análise estruturada completa.
 
 ## O que o sistema faz
 
@@ -58,10 +59,11 @@ ExtractionAgent × N trechos   ──►  ConsolidationAgent (se N > 1)
 
 Toda a comunicação com o modelo é feita através da interface `AiClient`
 (`com.rafaelvianna.legalanalyzer.ai`), implementada por padrão por
-`AnthropicAiClient` (API de Mensagens da Anthropic/Claude). Trocar de
-provedor de IA (OpenAI, Azure OpenAI, um modelo self-hosted, etc.) significa
-apenas criar uma nova implementação de `AiClient` — nenhum agente precisa
-mudar.
+`OllamaAiClient` (endpoint `POST /api/chat` do Ollama, `stream: false` e
+`format: "json"`). A implementação `AnthropicAiClient` (Claude) continua no
+projeto como alternativa: a escolha é feita pela propriedade
+`legal-analyzer.ai.provider` (`ollama` — padrão — ou `anthropic`), via
+`@ConditionalOnProperty`, sem que nenhum agente precise mudar.
 
 ## Estrutura do projeto
 
@@ -72,7 +74,7 @@ src/main/java/com/rafaelvianna/legalanalyzer/
 ├── web/                ProcessoAnaliseController, GlobalExceptionHandler
 │   └── dto/            Records de request/response (partes, pedidos, decisões, ...)
 ├── pdf/                PdfTextExtractionService, PdfTextChunker
-├── ai/                 AiClient, AnthropicAiClient, AiJsonSupport
+├── ai/                 AiClient, OllamaAiClient (padrão), AnthropicAiClient, AiJsonSupport
 ├── analysis/
 │   ├── LegalAnalysisOrchestrator.java   (orquestra a pipeline completa)
 │   ├── agents/          Um agente por tarefa (Extraction, Consolidation,
@@ -86,22 +88,56 @@ src/main/java/com/rafaelvianna/legalanalyzer/
 
 - JDK 17+
 - Maven 3.9+
-- Uma chave de API da Anthropic (`ANTHROPIC_API_KEY`) — ou substitua
-  `AnthropicAiClient` por outra implementação de `AiClient` para usar outro
-  provedor de IA.
+- [Ollama](https://ollama.com) instalado e em execução, com um modelo baixado:
+
+```bash
+ollama serve                 # sobe o servidor em http://localhost:11434
+ollama pull llama3.1:8b      # ou qwen2.5:14b, mistral-nemo, gemma2:27b, etc.
+```
+
+Recomenda-se um modelo com boa aderência a JSON e contexto grande, já que os
+agentes recebem trechos longos de processos. Não há chave de API nem custo por
+chamada — mas o desempenho depende da sua máquina (GPU/VRAM).
 
 ## Configuração
 
 Variáveis de ambiente (todas com defaults sensatos em `application.yml`):
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."          # obrigatória
-export ANTHROPIC_MODEL="claude-sonnet-5"        # opcional
-export ANTHROPIC_BASE_URL="https://api.anthropic.com/v1/messages"  # opcional
-export ANTHROPIC_MAX_TOKENS="4096"              # opcional
-export ANTHROPIC_TEMPERATURE="0.2"              # opcional
-export ANTHROPIC_TIMEOUT_SECONDS="120"          # opcional
+export AI_PROVIDER="ollama"                              # opcional (padrão: ollama)
+export OLLAMA_MODEL="llama3.1:8b"                        # opcional
+export OLLAMA_BASE_URL="http://localhost:11434/api/chat" # opcional
+export OLLAMA_MAX_TOKENS="4096"                          # opcional (num_predict)
+export OLLAMA_TEMPERATURE="0.2"                          # opcional
+export OLLAMA_TIMEOUT_SECONDS="600"                      # opcional (modelo local é mais lento)
+export OLLAMA_CONTEXT_WINDOW="16384"                     # opcional (num_ctx)
+export OLLAMA_JSON_MODE="true"                           # opcional (format: "json")
+export OLLAMA_KEEP_ALIVE="30m"                           # opcional (mantém o modelo carregado)
+export OLLAMA_API_KEY=""                                 # só se houver proxy com bearer token
 ```
+
+### Voltar para a Anthropic (Claude)
+
+O `AnthropicAiClient` segue disponível; basta trocar o provedor e apontar as
+mesmas propriedades genéricas de IA para a API da Anthropic:
+
+```bash
+export AI_PROVIDER="anthropic"
+export OLLAMA_API_KEY="sk-ant-..."   # lida em legal-analyzer.ai.api-key
+export OLLAMA_MODEL="claude-sonnet-4-5"
+export OLLAMA_BASE_URL="https://api.anthropic.com/v1/messages"
+```
+
+### Notas de desempenho com modelo local
+
+- `chunk-char-size` foi reduzido para **20000** caracteres (era 45000), porque
+  modelos locais costumam ter janela de contexto menor que a do Claude. Se usar
+  um modelo com contexto grande, aumente `chunk-char-size` e `context-window`
+  juntos.
+- `timeout-seconds` subiu para **600**: inferência local em CPU pode levar
+  minutos por chamada, e a pipeline faz de 5 a N+5 chamadas.
+- `keep-alive` evita recarregar o modelo em memória entre as chamadas da
+  pipeline.
 
 Outros parâmetros (tamanho máximo de PDF, tamanho de chunk, overlap) ficam em
 `src/main/resources/application.yml`, sob `legal-analyzer.pdf`.
@@ -131,7 +167,7 @@ Resposta (resumida — todos os campos são retornados de fato):
     "nomeArquivo": "processo.pdf",
     "quantidadeCaracteresExtraidos": 138422,
     "quantidadeTrechosProcessados": 4,
-    "modeloIaUtilizado": "claude-sonnet-5",
+    "modeloIaUtilizado": "llama3.1:8b",
     "dataProcessamento": "2026-08-12T14:32:10Z"
   },
   "partes": [
@@ -172,16 +208,21 @@ documentos jurídicos reais, considere:
   lança erro se não conseguir extrair texto. Adicionar OCR (ex.: Tesseract)
   como fallback é recomendado para digitalizações.
 - **Segurança e sigilo profissional**: documentos jurídicos são sensíveis
-  (segredo de justiça, dados pessoais). Adicione autenticação/autorização
-  (ex.: Spring Security + OAuth2), criptografia em trânsito/repouso, e
-  avalie os termos de retenção de dados do provedor de IA antes de enviar
-  documentos reais.
+  (segredo de justiça, dados pessoais). Rodar o modelo localmente via Ollama
+  resolve a parte de não enviar o documento a terceiros, mas ainda é
+  recomendado adicionar autenticação/autorização (ex.: Spring Security +
+  OAuth2) e criptografia em trânsito/repouso.
 - **Persistência**: atualmente nada é salvo — a resposta é devolvida e
   descartada. Se quiser histórico/auditoria, adicione um banco de dados
   (ex.: PostgreSQL) e uma tabela de análises.
-- **Custo e limites de taxa**: cada análise dispara de 5 a N+5 chamadas ao
-  modelo de IA (N = número de chunks). Monitore custo e implemente
-  retry/backoff e rate limiting para uso em escala.
+- **Capacidade e concorrência**: cada análise dispara de 5 a N+5 chamadas ao
+  modelo (N = número de chunks). Com Ollama não há custo por token, mas há
+  um gargalo de GPU/CPU — implemente uma fila, retry/backoff e limite de
+  análises simultâneas para uso em escala.
+- **Qualidade do modelo**: modelos locais menores erram mais em extração
+  estruturada que modelos de fronteira. Vale testar 2-3 modelos
+  (`llama3.1:8b`, `qwen2.5:14b`, `gemma2:27b`) com processos reais antes de
+  fixar um.
 - **Validação jurídica**: as respostas dos agentes são geradas por IA e
   podem conter erros ou omissões — este sistema é uma ferramenta de apoio,
   não substitui a revisão de um advogado.
@@ -192,7 +233,8 @@ documentos jurídicos reais, considere:
 mvn test
 ```
 
-Inclui um teste unitário de exemplo para `PdfTextChunker`. Recomenda-se
-complementar com testes de integração usando um `AiClient` "fake"
-(implementação de teste) para validar a orquestração sem custo de chamadas
-reais de IA.
+Inclui testes unitários para `PdfTextChunker` e para `OllamaAiClient`
+(este último usa um servidor HTTP local que simula o `/api/chat` do Ollama,
+validando o payload enviado e o tratamento de erros sem precisar de um modelo
+carregado). Recomenda-se complementar com testes de integração usando um
+`AiClient` "fake" para validar a orquestração completa.

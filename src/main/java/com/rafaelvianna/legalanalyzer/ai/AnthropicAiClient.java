@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rafaelvianna.legalanalyzer.config.AppProperties;
 import com.rafaelvianna.legalanalyzer.exception.AiClientException;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -24,8 +25,12 @@ import java.util.Map;
  * adicionais de SDK.
  *
  * Documentação da API: https://docs.claude.com/en/api/messages
+ *
+ * Só é registrada como bean quando `legal-analyzer.ai.provider=anthropic`.
+ * O provedor padrão do projeto é o Ollama ({@link OllamaAiClient}).
  */
 @Component
+@ConditionalOnProperty(name = "legal-analyzer.ai.provider", havingValue = "anthropic")
 public class AnthropicAiClient implements AiClient {
 
     private final HttpClient httpClient;
