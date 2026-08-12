@@ -3,6 +3,8 @@ package com.rafaelvianna.legalanalyzer.ai;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.rafaelvianna.legalanalyzer.exception.AiClientException;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +22,10 @@ public class AiJsonSupport {
     public AiJsonSupport() {
         this.mapper = new ObjectMapper();
         this.mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        // Datas (Instant nos metadados) precisam ser serializáveis: os DTOs de
+        // análise entram como material dos prompts do briefing e do chat.
+        this.mapper.registerModule(new JavaTimeModule());
+        this.mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
     public <T> T parse(String respostaBruta, Class<T> tipo) {

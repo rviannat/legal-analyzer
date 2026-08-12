@@ -10,7 +10,7 @@ import java.util.List;
  * constructor binding automático do Spring Boot 3.
  */
 @ConfigurationProperties(prefix = "legal-analyzer")
-public record AppProperties(Ai ai, Pdf pdf, Especializada especializada, LegalResearch legalResearch) {
+public record AppProperties(Ai ai, Pdf pdf, Especializada especializada, LegalResearch legalResearch, Rag rag) {
 
     /**
      * Configurações do provedor de IA (por padrão, Ollama — modelo local).
@@ -115,6 +115,67 @@ public record AppProperties(Ai ai, Pdf pdf, Especializada especializada, LegalRe
 
         public static LegalResearch desabilitada() {
             return new LegalResearch(false, List.of(), List.of(), 8_000, 3, 20);
+        }
+    }
+
+    /**
+     * Parâmetros do RAG (índice do caso, briefing e chat com o advogado).
+     *
+     * @param embeddingsHabilitados      liga a busca semântica; se falhar, cai para busca léxica
+     * @param embeddingModel             modelo de embeddings no Ollama (ex.: nomic-embed-text)
+     * @param embeddingBaseUrl           endpoint de embeddings do Ollama
+     * @param embeddingTimeoutSeconds    timeout de cada chamada de embedding
+     * @param tamanhoPassagemChars       tamanho de cada passagem indexada
+     * @param sobreposicaoPassagemChars  sobreposição entre passagens da mesma página
+     * @param maxPassagensIndexadas      teto de passagens por caso (protege memória)
+     * @param maxPassagensPorResposta    quantas passagens vão no contexto de cada resposta
+     * @param scoreMinimo                corte de relevância na recuperação
+     * @param maxMensagensHistorico      mensagens do histórico reenviadas ao modelo
+     */
+    public record Rag(
+            boolean embeddingsHabilitados,
+            String embeddingModel,
+            String embeddingBaseUrl,
+            int embeddingTimeoutSeconds,
+            int tamanhoPassagemChars,
+            int sobreposicaoPassagemChars,
+            int maxPassagensIndexadas,
+            int maxPassagensPorResposta,
+            double scoreMinimo,
+            int maxMensagensHistorico
+    ) {
+        public int embeddingTimeoutSeconds() {
+            return embeddingTimeoutSeconds > 0 ? embeddingTimeoutSeconds : 60;
+        }
+
+        public int tamanhoPassagemChars() {
+            return tamanhoPassagemChars > 0 ? tamanhoPassagemChars : 1_200;
+        }
+
+        public int sobreposicaoPassagemChars() {
+            return sobreposicaoPassagemChars > 0 ? sobreposicaoPassagemChars : 200;
+        }
+
+        public int maxPassagensIndexadas() {
+            return maxPassagensIndexadas > 0 ? maxPassagensIndexadas : 4_000;
+        }
+
+        public int maxPassagensPorResposta() {
+            return maxPassagensPorResposta > 0 ? maxPassagensPorResposta : 8;
+        }
+
+        public double scoreMinimo() {
+            return scoreMinimo > 0 ? scoreMinimo : 0.05;
+        }
+
+        public int maxMensagensHistorico() {
+            return maxMensagensHistorico > 0 ? maxMensagensHistorico : 6;
+        }
+
+        /** Padrões usados quando a seção não está no application.yml. */
+        public static Rag padrao() {
+            return new Rag(false, "nomic-embed-text", "http://localhost:11434/api/embeddings",
+                    60, 1_200, 200, 4_000, 8, 0.05, 6);
         }
     }
 

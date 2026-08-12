@@ -8,6 +8,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.ByteArrayInputStream;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Responsável pela tarefa 1 (leitura dos documentos): extrai o texto puro
@@ -55,6 +57,44 @@ public class PdfTextExtractionService {
             }
 
             return textoNormalizado;
+        } catch (IOException e) {
+            throw new PdfProcessingException("Falha ao ler o arquivo PDF: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Extrai o texto página por página, preservando o número de cada uma.
+     *
+     * Usado pela indexação para RAG: sem o número da página não é possível
+     * apontar ao advogado onde conferir a informação no documento.
+     *
+     * @return páginas com texto útil (páginas em branco são descartadas)
+     */
+    public List<PaginaExtraida> extractPages(byte[] conteudo, String nomeArquivo) {
+        try (PDDocument document = PDDocument.load(new ByteArrayInputStream(conteudo))) {
+            if (document.isEncrypted()) {
+                throw new PdfProcessingException(
+                        "O PDF está protegido/criptografado e não pode ser processado. " +
+                        "Remova a proteção antes de enviar o arquivo.");
+            }
+            int totalPaginas = document.getNumberOfPages();
+            if (totalPaginas == 0) {
+                throw new PdfProcessingException("O PDF enviado não contém páginas.");
+            }
+
+            List<PaginaExtraida> paginas = new ArrayList<>();
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+
+            for (int pagina = 1; pagina <= totalPaginas; pagina++) {
+                stripper.setStartPage(pagina);
+                stripper.setEndPage(pagina);
+                String texto = normalizar(stripper.getText(document));
+                if (!texto.isBlank()) {
+                    paginas.add(new PaginaExtraida(pagina, texto));
+                }
+            }
+            return List.copyOf(paginas);
         } catch (IOException e) {
             throw new PdfProcessingException("Falha ao ler o arquivo PDF: " + e.getMessage(), e);
         }

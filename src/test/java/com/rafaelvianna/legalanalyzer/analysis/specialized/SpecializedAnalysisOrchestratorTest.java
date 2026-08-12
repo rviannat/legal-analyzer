@@ -159,7 +159,8 @@ class SpecializedAnalysisOrchestratorTest {
                         4096, 0.2, 30, 16384, true, "30m"),
                 new AppProperties.Pdf(1024, 100, 10),
                 new AppProperties.Especializada(16000, 5, 8000),
-                AppProperties.LegalResearch.desabilitada());
+                AppProperties.LegalResearch.desabilitada(),
+                AppProperties.Rag.padrao());
 
         return new SpecializedAnalysisOrchestrator(
                 new DocumentAgent(ai, json),

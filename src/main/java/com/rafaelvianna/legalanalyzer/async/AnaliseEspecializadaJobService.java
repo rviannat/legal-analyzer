@@ -3,11 +3,16 @@ package com.rafaelvianna.legalanalyzer.async;
 import com.rafaelvianna.legalanalyzer.analysis.specialized.SpecializedAnalysisOrchestrator;
 import com.rafaelvianna.legalanalyzer.exception.PdfProcessingException;
 import com.rafaelvianna.legalanalyzer.web.dto.specialized.AnaliseEspecializadaRequest;
+import com.rafaelvianna.legalanalyzer.web.dto.specialized.AnaliseEspecializadaResponse;
 import com.rafaelvianna.legalanalyzer.web.dto.specialized.OpcaoAnaliseEspecializadaDTO;
 import com.rafaelvianna.legalanalyzer.web.dto.specialized.TipoRascunho;
+import com.rafaelvianna.legalanalyzer.rag.ProcessoIndexService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -22,6 +27,8 @@ import java.util.concurrent.Executor;
 @Service
 public class AnaliseEspecializadaJobService {
 
+    private static final Logger log = LoggerFactory.getLogger(AnaliseEspecializadaJobService.class);
+
     /** Nomes dos agentes, na ordem em que participam do fluxo. */
     public static final List<String> AGENTES = List.of(
             "Document Agent", "Process Agent", "Contract Agent", "Deadline Agent",
@@ -29,14 +36,17 @@ public class AnaliseEspecializadaJobService {
 
     private final AnaliseJobService analiseJobService;
     private final SpecializedAnalysisOrchestrator orchestrator;
+    private final ProcessoIndexService indexService;
     private final Executor executor;
     private final Map<String, AnaliseEspecializadaJob> jobs = new ConcurrentHashMap<>();
 
     public AnaliseEspecializadaJobService(AnaliseJobService analiseJobService,
                                           SpecializedAnalysisOrchestrator orchestrator,
+                                          ProcessoIndexService indexService,
                                           Executor legalAnalysisExecutor) {
         this.analiseJobService = analiseJobService;
         this.orchestrator = orchestrator;
+        this.indexService = indexService;
         this.executor = legalAnalysisExecutor;
     }
 
@@ -78,6 +88,22 @@ public class AnaliseEspecializadaJobService {
         return AnaliseEspecializadaJobResponse.status(job);
     }
 
+    /**
+     * Último resultado especializado concluído para uma análise base.
+     *
+     * Usado pelo briefing e pelo chat: se os agentes especializados já rodaram,
+     * o briefing sai completo (matriz de evidências, prazos detalhados,
+     * parecer); se não, sai com aviso do que está faltando.
+     */
+    public AnaliseEspecializadaResponse ultimoResultadoDaBase(String analiseBaseId) {
+        return jobs.values().stream()
+                .filter(j -> analiseBaseId.equals(j.analiseBaseId()))
+                .filter(j -> j.status() == AnaliseEspecializadaStatus.CONCLUIDO && j.resultado() != null)
+                .max(Comparator.comparing(AnaliseEspecializadaJob::atualizadoEm))
+                .map(AnaliseEspecializadaJob::resultado)
+                .orElse(null);
+    }
+
     public AnaliseEspecializadaJobResponse consultar(String id) {
         AnaliseEspecializadaJob job = jobs.get(id);
         if (job == null) {
@@ -95,6 +121,18 @@ public class AnaliseEspecializadaJobService {
                     analiseBase.resultado(),
                     opcoes,
                     job::atualizar);
+
+            // Reindexa o caso incorporando as fichas dos agentes especializados:
+            // a partir daqui o chat pode citar cláusulas de risco, prazos
+            // detalhados e a matriz de evidências, não só o texto do PDF.
+            try {
+                indexService.indexar(analiseBase.id(), analiseBase.paginas(),
+                        analiseBase.resultado(), resultado);
+            } catch (Exception e) {
+                log.warn("Falha ao reindexar o caso {} com a análise especializada: {}",
+                        analiseBase.id(), e.getMessage());
+            }
+
             job.concluir(resultado);
         } catch (Exception e) {
             job.falhar(e.getMessage() == null

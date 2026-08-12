@@ -301,6 +301,141 @@ Todo rascunho sai com `avisoRevisao` explícito, `pontosDeAtencao` e
 valores, datas e fundamentos legais — nesses pontos o texto usa marcadores
 `[CONFERIR]`, `[COMPLETAR]` e `[FUNDAMENTO A VALIDAR]`.
 
+## Briefing de assunção do caso + chat com o processo (RAG)
+
+O entregável desta etapa **não é "resuma este PDF"**. É responder à pergunta:
+
+> "Explique este processo para um advogado que acabou de assumir o caso."
+
+Depois da análise, o caso é indexado e passam a existir dois recursos: o
+**briefing de assunção** (estruturado, previsível, com ponteiro de página) e um
+**chat ancorado**, que só responde citando documento e página.
+
+### Como o caso é indexado
+
+O índice de cada caso combina duas fontes:
+
+| Origem | Conteúdo | Citação gerada |
+|---|---|---|
+| `TEXTO_PROCESSO` | texto do PDF, **página por página** (`PdfTextExtractionService.extractPages`) | "Documento — página 42" |
+| `FICHA_ANALISE` | fatos já apurados pelos agentes: partes, cronologia, pedidos, decisões, prazos, inconsistências, cláusulas de risco, matriz de evidências, parecer sênior | "Análise — cronologia" |
+
+Indexar as fichas junto com o texto é o que permite ao chat responder
+"quais são os pontos controvertidos?" sem depender de o modelo reler o
+processo inteiro a cada pergunta.
+
+**Busca híbrida** (`IndiceProcesso`): similaridade de cosseno sobre embeddings
+do Ollama (`nomic-embed-text`, via `POST /api/embeddings`) somada a uma busca
+léxica ponderada por IDF. A parte léxica é essencial no jurídico, onde a
+pergunta traz o termo exato ("cláusula 7.2", "Documento 17", nome da parte).
+
+Se o modelo de embeddings não estiver disponível, o sistema **registra o aviso
+e continua em modo léxico** — a análise nunca falha por causa do RAG:
+
+```bash
+ollama pull nomic-embed-text     # habilita a busca semântica
+# sem esse modelo, o índice funciona apenas em modo léxico
+```
+
+### Briefing de assunção
+
+`GET /api/v1/processos/analises/{id}/briefing` (JSON)
+`GET /api/v1/processos/analises/{id}/briefing.md` (Markdown pronto para a pasta do caso)
+
+Estrutura fixa, na ordem em que o advogado lê:
+
+1. **Processo** — numeração única CNJ extraída por regex do próprio documento
+   (`0001234-56.2026.8.26.0000`); se não houver, "não identificado" — nunca um
+   número inferido.
+2. **Partes** — nome, papel e qualificação.
+3. **Situação** — resumo executivo de ~1 página escrito para quem está
+   assumindo o caso agora, mais "onde estamos", "o que está em jogo" e
+   "próxima ação".
+4. **Linha do tempo** — tabela `Data | Evento | Onde conferir`, em ordem
+   cronológica, com as decisões incluídas.
+5. **Pontos de atenção** — classificados: `CONTRADICAO`
+   ("Documento X contradiz a petição inicial"), `ALEGACAO_SEM_DOCUMENTO`,
+   `DECISAO_RELEVANTE`, `PRAZO_CRITICO`, `CLAUSULA_DE_RISCO`, `LACUNA`.
+   Ordenados por gravidade.
+6. **Evidências** — o rastro `Alegação → Documento 17 → página 42`.
+7. **Perguntas para o advogado** — o contrato original está disponível? houve
+   notificação extrajudicial? existe comprovante de pagamento? existe
+   comunicação posterior ao evento? (mais as lacunas específicas apuradas
+   pelos agentes).
+
+**Somente a "situação" é escrita pelo modelo.** Tabelas, ponteiros de página,
+classificação de pontos de atenção e perguntas são montados de forma
+determinística a partir do que os agentes apuraram. Se o modelo falhar, o
+briefing continua sendo entregue com o resumo da análise base e um aviso.
+
+A página em "Onde conferir" e na coluna `Página` só aparece quando o termo foi
+**efetivamente localizado no texto do PDF**. Quando não foi, o campo vem nulo e
+o status é `NAO_LOCALIZADO_NO_PDF` — uma lacuna explícita vale mais que um
+ponteiro inventado.
+
+### Chat com o processo
+
+```bash
+# pergunta (sessaoId opcional; omita para iniciar uma conversa)
+curl -X POST http://localhost:8080/api/v1/processos/analises/{id}/chat \
+  -H "Content-Type: application/json" \
+  -d '{"pergunta":"Existe comprovante de pagamento da terceira parcela?"}'
+```
+
+```json
+{
+  "sessaoId": "3f2a...",
+  "resposta": "Sim. O Documento 17 comprova o pagamento da terceira parcela [T1], e o prazo de réplica vence em 20/05/2026 [T2].",
+  "citacoes": [
+    { "rotulo": "Documento — página 42", "pagina": 42, "origem": "TEXTO_PROCESSO", "trecho": "Documento 17 - comprovante..." },
+    { "rotulo": "Análise — prazos", "pagina": null, "origem": "FICHA_ANALISE", "trecho": "20/05/2026: prazo para réplica..." }
+  ],
+  "fundamentada": true,
+  "modoRecuperacao": "semantica+lexica",
+  "perguntasSugeridas": ["Há comprovante das demais parcelas?"],
+  "aviso": "Resposta de apoio gerada automaticamente..."
+}
+```
+
+Travas contra citação falsa (`ValidadorAncoragem`):
+
+- o modelo recebe os trechos numerados `[T1]...[Tn]` e é obrigado a citar o
+  marcador de cada afirmação;
+- marcadores que **não existem** no contexto recuperado são apagados da
+  resposta;
+- se não restar nenhum marcador válido, a resposta é **descartada** e
+  substituída por "Não consta no material analisado.", com a indicação do que
+  precisaria ser localizado nos autos;
+- o prompt proíbe citar legislação, súmula, valor ou data fora dos trechos.
+
+Outros endpoints:
+
+```bash
+# histórico da conversa (para recarregar a tela)
+GET /api/v1/processos/chats/{sessaoId}
+
+# diagnóstico do índice: passagens, páginas e se a busca semântica está ativa
+GET /api/v1/processos/analises/{id}/indice
+```
+
+O índice é montado ao final da análise base e **reconstruído** quando a análise
+especializada termina — a partir daí o chat também cita cláusulas de risco,
+prazos detalhados e a matriz de evidências.
+
+### Configuração do RAG
+
+```yaml
+legal-analyzer:
+  rag:
+    embeddings-habilitados: true      # RAG_EMBEDDINGS_ENABLED
+    embedding-model: nomic-embed-text # RAG_EMBEDDING_MODEL
+    embedding-base-url: http://localhost:11434/api/embeddings
+    tamanho-passagem-chars: 1200      # tamanho de cada passagem indexada
+    max-passagens-por-resposta: 8     # trechos no contexto de cada resposta
+    score-minimo: 0.05                # corte de relevância
+    max-mensagens-historico: 6        # histórico reenviado ao modelo
+```
+
 ## Limitações e próximos passos (para uso em produção)
 
 Este projeto é um ponto de partida sólido, mas antes de ir para produção com
@@ -310,6 +445,14 @@ documentos jurídicos reais, considere:
   assíncrona, mas o estado fica em memória (`ConcurrentHashMap`). Um restart
   perde os jobs em andamento e os resultados — para produção, mova para banco
   ou cache distribuído.
+- **Armazenamento vetorial em memória**: o índice do RAG (`IndiceProcesso`)
+  vive no processo e a busca é linear sobre as passagens. Funciona bem para
+  processos individuais; para uma base com milhares de casos, migre para um
+  banco vetorial (pgvector, Qdrant) mantendo a mesma interface
+  `EmbeddingClient` + busca híbrida.
+- **Sessões de chat em memória**: o histórico das conversas se perde no
+  restart; persistir também serve de trilha de auditoria do que foi respondido
+  ao advogado.
 - **PDFs escaneados / sem camada de texto**: `PdfTextExtractionService`
   lança erro se não conseguir extrair texto. Adicionar OCR (ex.: Tesseract)
   como fallback é recomendado para digitalizações.
@@ -342,6 +485,15 @@ mvn test
 Cobertura atual:
 
 - `PdfTextChunkerTest` — divisão de texto com sobreposição.
+- `IndiceProcessoTest` — recuperação em modo léxico (sem embeddings),
+  normalização de acentos, ordenação por cosseno e rastreio de página
+  (inclusive a garantia de **não** apontar página para termo inexistente).
+- `ValidadorAncoragemTest` — a trava contra citação falsa: marcador inventado
+  é removido e resposta sem citação válida é rebaixada para não fundamentada.
+- `BriefingAssuncaoServiceTest` — montagem do dossiê completo, ordem
+  cronológica, alegação sem documento virando ponto de atenção, ausência de
+  página quando o documento não é localizado e entrega do briefing mesmo com o
+  modelo fora do ar.
 - `OllamaAiClientTest` — servidor HTTP local simulando o `/api/chat` do Ollama:
   payload enviado e tratamento de erros, sem precisar de modelo carregado.
 - `AiProviderSelectionTest` / `AnthropicProviderSelectionTest` — seleção do

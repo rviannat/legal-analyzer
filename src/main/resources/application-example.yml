@@ -51,3 +51,29 @@
 # na allowlist são baixadas — a checagem é refeita após cada redirecionamento.
 # Para adicionar uma fonte própria (ex.: tribunal estadual ou base interna),
 # inclua o domínio na allowlist e a url-template na lista de fontes.
+#
+# --- RAG: briefing de assuncao + chat com o processo ---
+#
+# A busca lexica funciona sempre. Os embeddings sao opcionais e, se o modelo
+# nao estiver disponivel, o indice cai automaticamente para o modo lexico
+# (com aviso no log) em vez de derrubar a analise.
+#
+#   ollama pull nomic-embed-text
+#
+#   export RAG_EMBEDDINGS_ENABLED="true"
+#   export RAG_EMBEDDING_MODEL="nomic-embed-text"
+#   export RAG_EMBEDDING_BASE_URL="http://localhost:11434/api/embeddings"
+#   export RAG_EMBEDDING_TIMEOUT_SECONDS="60"
+#   export RAG_TAMANHO_PASSAGEM="1200"        # tamanho de cada passagem indexada
+#   export RAG_SOBREPOSICAO_PASSAGEM="200"
+#   export RAG_MAX_PASSAGENS="4000"           # teto de passagens por caso
+#   export RAG_MAX_PASSAGENS_RESPOSTA="8"     # trechos no contexto de cada resposta
+#   export RAG_SCORE_MINIMO="0.05"            # corte de relevancia na recuperacao
+#   export RAG_MAX_HISTORICO="6"              # mensagens de historico reenviadas
+#
+# Endpoints:
+#   GET  /api/v1/processos/analises/{id}/briefing      -> dossie em JSON
+#   GET  /api/v1/processos/analises/{id}/briefing.md   -> dossie em Markdown
+#   POST /api/v1/processos/analises/{id}/chat          -> pergunta ancorada
+#   GET  /api/v1/processos/chats/{sessaoId}            -> historico da conversa
+#   GET  /api/v1/processos/analises/{id}/indice        -> diagnostico do indice

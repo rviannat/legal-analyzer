@@ -2,7 +2,10 @@ package com.rafaelvianna.legalanalyzer.async;
 
 import com.rafaelvianna.legalanalyzer.web.dto.AnaliseProcessoResponse;
 
+import com.rafaelvianna.legalanalyzer.pdf.PaginaExtraida;
+
 import java.time.Instant;
+import java.util.List;
 
 public final class AnaliseJob {
     private final String id;
@@ -16,6 +19,10 @@ public final class AnaliseJob {
     private volatile AnaliseProcessoResponse resultado;
     /** Texto extraído do PDF, guardado para reuso pela análise especializada. */
     private volatile String textoExtraido;
+    /** Texto página por página, base da citação "página N" no briefing e no chat. */
+    private volatile List<PaginaExtraida> paginas = List.of();
+    /** Numeração única CNJ encontrada no documento, quando existir. */
+    private volatile String numeroProcesso = "não identificado";
 
     public AnaliseJob(String id, String nomeArquivo) {
         this.id = id;
@@ -58,4 +65,14 @@ public final class AnaliseJob {
     public String textoExtraido() { return textoExtraido; }
 
     public void textoExtraido(String textoExtraido) { this.textoExtraido = textoExtraido; }
+
+    public List<PaginaExtraida> paginas() { return paginas; }
+
+    public void paginas(List<PaginaExtraida> paginas) {
+        this.paginas = paginas == null ? List.of() : List.copyOf(paginas);
+    }
+
+    public String numeroProcesso() { return numeroProcesso; }
+
+    public void numeroProcesso(String numeroProcesso) { this.numeroProcesso = numeroProcesso; }
 }

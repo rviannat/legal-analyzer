@@ -68,6 +68,22 @@ legal-analyzer:
     max-fontes-por-consulta: ${LEGAL_RESEARCH_MAX_FONTES:3}
     timeout-seconds: ${LEGAL_RESEARCH_TIMEOUT_SECONDS:20}
 
+  # RAG: indice do caso (PDF por pagina + fichas da analise), briefing de
+  # assuncao e chat ancorado. A busca lexica funciona sempre; os embeddings
+  # sao opcionais e, se falharem, o indice continua respondendo em modo lexico.
+  rag:
+    # requer: ollama pull nomic-embed-text
+    embeddings-habilitados: ${RAG_EMBEDDINGS_ENABLED:true}
+    embedding-model: ${RAG_EMBEDDING_MODEL:nomic-embed-text}
+    embedding-base-url: ${RAG_EMBEDDING_BASE_URL:http://localhost:11434/api/embeddings}
+    embedding-timeout-seconds: ${RAG_EMBEDDING_TIMEOUT_SECONDS:60}
+    tamanho-passagem-chars: ${RAG_TAMANHO_PASSAGEM:1200}
+    sobreposicao-passagem-chars: ${RAG_SOBREPOSICAO_PASSAGEM:200}
+    max-passagens-indexadas: ${RAG_MAX_PASSAGENS:4000}
+    max-passagens-por-resposta: ${RAG_MAX_PASSAGENS_RESPOSTA:8}
+    score-minimo: ${RAG_SCORE_MINIMO:0.05}
+    max-mensagens-historico: ${RAG_MAX_HISTORICO:6}
+
 logging:
   level:
     com.rafaelvianna.legalanalyzer: INFO
