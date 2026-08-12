@@ -33,6 +33,41 @@ legal-analyzer:
     chunk-char-size: 20000             # ~ tamanho de trecho enviado por chamada de IA
     chunk-overlap-chars: 2000          # sobreposição entre trechos para não perder contexto
 
+  especializada:
+    # amostra do texto original enviada aos agentes especializados
+    amostra-texto-chars: ${ESPECIALIZADA_AMOSTRA_CHARS:16000}
+    # quantidade maxima de rascunhos por requisicao (Drafting Agent)
+    max-rascunhos: ${ESPECIALIZADA_MAX_RASCUNHOS:5}
+    # tamanho maximo aproximado de cada rascunho gerado
+    max-chars-rascunho: ${ESPECIALIZADA_MAX_CHARS_RASCUNHO:8000}
+  # Pesquisa juridica: SOMENTE fontes autorizadas e rastreaveis.
+  # Desabilitada por padrao -> o Legal Research Agent informa que nao pesquisou,
+  # em vez de permitir que o modelo cite legislacao/jurisprudencia de memoria.
+  legal-research:
+    enabled: ${LEGAL_RESEARCH_ENABLED:false}
+    # allowlist de dominios: qualquer URL fora desta lista e' recusada (inclusive apos redirect)
+    dominios-autorizados:
+      - planalto.gov.br
+      - lexml.gov.br
+      - stf.jus.br
+      - stj.jus.br
+      - tst.jus.br
+      - cnj.jus.br
+      - senado.leg.br
+      - camara.leg.br
+      - in.gov.br
+    # endpoints de busca; {consulta} e' substituido pela consulta (URL-encoded)
+    fontes:
+      - nome: "LexML - legislacao e jurisprudencia (Rede de Informacao Legislativa e Juridica)"
+        url-template: "https://www.lexml.gov.br/busca/search?keyword={consulta}"
+      - nome: "STF - pesquisa de jurisprudencia"
+        url-template: "https://jurisprudencia.stf.jus.br/pages/search?base=acordaos&query={consulta}"
+      - nome: "STJ - pesquisa de jurisprudencia"
+        url-template: "https://scon.stj.jus.br/SCON/pesquisar.jsp?b=ACOR&livre={consulta}"
+    max-chars-por-fonte: ${LEGAL_RESEARCH_MAX_CHARS:8000}
+    max-fontes-por-consulta: ${LEGAL_RESEARCH_MAX_FONTES:3}
+    timeout-seconds: ${LEGAL_RESEARCH_TIMEOUT_SECONDS:20}
+
 logging:
   level:
     com.rafaelvianna.legalanalyzer: INFO

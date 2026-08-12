@@ -14,6 +14,8 @@ public final class AnaliseJob {
     private volatile String etapa;
     private volatile String mensagem;
     private volatile AnaliseProcessoResponse resultado;
+    /** Texto extraído do PDF, guardado para reuso pela análise especializada. */
+    private volatile String textoExtraido;
 
     public AnaliseJob(String id, String nomeArquivo) {
         this.id = id;
@@ -52,4 +54,8 @@ public final class AnaliseJob {
     public String etapa() { return etapa; }
     public String mensagem() { return mensagem; }
     public AnaliseProcessoResponse resultado() { return resultado; }
+
+    public String textoExtraido() { return textoExtraido; }
+
+    public void textoExtraido(String textoExtraido) { this.textoExtraido = textoExtraido; }
 }

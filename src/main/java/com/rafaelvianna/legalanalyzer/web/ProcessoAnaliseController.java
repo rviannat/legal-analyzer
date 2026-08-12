@@ -1,10 +1,14 @@
 package com.rafaelvianna.legalanalyzer.web;
 
+import com.rafaelvianna.legalanalyzer.async.AnaliseEspecializadaJobResponse;
+import com.rafaelvianna.legalanalyzer.async.AnaliseEspecializadaJobService;
+import com.rafaelvianna.legalanalyzer.async.AnaliseJob;
 import com.rafaelvianna.legalanalyzer.async.AnaliseJobResponse;
 import com.rafaelvianna.legalanalyzer.async.AnaliseJobService;
 import com.rafaelvianna.legalanalyzer.config.AppProperties;
 import com.rafaelvianna.legalanalyzer.exception.DocumentTooLargeException;
 import com.rafaelvianna.legalanalyzer.exception.PdfProcessingException;
+import com.rafaelvianna.legalanalyzer.web.dto.specialized.AnaliseEspecializadaRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -15,10 +19,14 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/v1/processos")
 public class ProcessoAnaliseController {
     private final AnaliseJobService jobService;
+    private final AnaliseEspecializadaJobService especializadaService;
     private final AppProperties properties;
 
-    public ProcessoAnaliseController(AnaliseJobService jobService, AppProperties properties) {
+    public ProcessoAnaliseController(AnaliseJobService jobService,
+                                     AnaliseEspecializadaJobService especializadaService,
+                                     AppProperties properties) {
         this.jobService = jobService;
+        this.especializadaService = especializadaService;
         this.properties = properties;
     }
 
@@ -28,9 +36,33 @@ public class ProcessoAnaliseController {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(jobService.iniciar(arquivo));
     }
 
+    /**
+     * Status da análise base. Quando concluída, a resposta traz em
+     * {@code analiseEspecializada} o endpoint e as opções da análise
+     * especializada (os 8 agentes especialistas).
+     */
     @GetMapping("/analises/{id}")
     public ResponseEntity<AnaliseJobResponse> consultar(@PathVariable String id) {
-        return ResponseEntity.ok(jobService.consultar(id));
+        AnaliseJob job = jobService.buscar(id);
+        return ResponseEntity.ok(AnaliseJobResponse.status(job, especializadaService.opcao(job)));
+    }
+
+    /**
+     * Habilita a análise especializada sobre uma análise base já concluída.
+     * O texto extraído e o resultado base são reaproveitados — não é preciso
+     * reenviar o PDF.
+     */
+    @PostMapping(value = "/analises/{id}/especializada", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<AnaliseEspecializadaJobResponse> analisarEspecializada(
+            @PathVariable String id,
+            @RequestBody(required = false) AnaliseEspecializadaRequest request) {
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(especializadaService.iniciar(id, request));
+    }
+
+    /** Status (e resultado, quando pronto) de uma análise especializada. */
+    @GetMapping("/analises-especializadas/{id}")
+    public ResponseEntity<AnaliseEspecializadaJobResponse> consultarEspecializada(@PathVariable String id) {
+        return ResponseEntity.ok(especializadaService.consultar(id));
     }
 
     @PostMapping(value = "/health")

@@ -43,17 +43,26 @@ public class AnaliseJobService {
     }
 
     public AnaliseJobResponse consultar(String id) {
+        return AnaliseJobResponse.status(buscar(id));
+    }
+
+    /**
+     * Recupera o job da análise base (com texto extraído e resultado), para que
+     * a análise especializada não precise reprocessar o PDF.
+     */
+    public AnaliseJob buscar(String id) {
         AnaliseJob job = jobs.get(id);
         if (job == null) {
             throw new PdfProcessingException("Análise não encontrada: " + id);
         }
-        return AnaliseJobResponse.status(job);
+        return job;
     }
 
     private void processar(AnaliseJob job, byte[] conteudo) {
         try {
             job.atualizar(AnaliseStatus.EXTRAINDO_PDF, 10, "Extraindo PDF", "Lendo e normalizando o conteúdo do documento.");
             String texto = pdfTextExtractionService.extractText(conteudo, job.nomeArquivo());
+            job.textoExtraido(texto);
 
             job.atualizar(AnaliseStatus.ANALISANDO_PARTES, 35, "Analisando partes e fatos", "Identificando partes, cronologia, pedidos, decisões, prazos e documentos.");
             var resultado = orchestrator.analisar(job.nomeArquivo(), texto, (status, progresso, etapa, mensagem) ->

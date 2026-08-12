@@ -29,3 +29,25 @@
 #   --legal-analyzer.ai.api-key=sk-ant-... \
 #   --legal-analyzer.ai.model=claude-sonnet-4-5 \
 #   --legal-analyzer.ai.base-url=https://api.anthropic.com/v1/messages
+#
+# --- Análise especializada (8 agentes) ---
+#
+#   export ESPECIALIZADA_AMOSTRA_CHARS="16000"       # amostra de texto enviada aos agentes
+#   export ESPECIALIZADA_MAX_RASCUNHOS="5"          # rascunhos por requisição
+#   export ESPECIALIZADA_MAX_CHARS_RASCUNHO="8000"  # tamanho máximo de cada rascunho
+#
+# --- Pesquisa jurídica (Legal Research Agent) ---
+#
+# Desabilitada por padrão. Com ela desligada, o agente informa que não pesquisou
+# e NENHUMA legislação ou jurisprudência é citada — evita referência inventada.
+#
+#   export LEGAL_RESEARCH_ENABLED="true"
+#   export LEGAL_RESEARCH_MAX_CHARS="8000"
+#   export LEGAL_RESEARCH_MAX_FONTES="3"
+#   export LEGAL_RESEARCH_TIMEOUT_SECONDS="20"
+#
+# A allowlist de domínios e as fontes (url-template com {consulta}) ficam em
+# application.yml, em legal-analyzer.legal-research. Só URLs cujo host esteja
+# na allowlist são baixadas — a checagem é refeita após cada redirecionamento.
+# Para adicionar uma fonte própria (ex.: tribunal estadual ou base interna),
+# inclua o domínio na allowlist e a url-template na lista de fontes.

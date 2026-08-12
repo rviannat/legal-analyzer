@@ -70,7 +70,8 @@ projeto como alternativa: a escolha é feita pela propriedade
 ```
 src/main/java/com/rafaelvianna/legalanalyzer/
 ├── LegalAnalyzerApplication.java
-├── config/            AppProperties, WebConfig (CORS)
+├── config/             AppProperties, AsyncConfig, WebConfig (CORS)
+├── async/              Jobs em memória: análise base e análise especializada
 ├── web/                ProcessoAnaliseController, GlobalExceptionHandler
 │   └── dto/            Records de request/response (partes, pedidos, decisões, ...)
 ├── pdf/                PdfTextExtractionService, PdfTextChunker
@@ -80,7 +81,12 @@ src/main/java/com/rafaelvianna/legalanalyzer/
 │   ├── agents/          Um agente por tarefa (Extraction, Consolidation,
 │   │                    Resumo, Inconsistencia, Evidencia, Perguntas,
 │   │                    RelatorioExecutivo)
-│   └── prompts/         PromptTemplates.java (todos os prompts em um só lugar)
+│   ├── specialized/     Análise especializada: SpecializedAnalysisOrchestrator
+│   │   └── agents/      Process, Contract, Document, LegalResearch, Deadline,
+│   │                    Evidence, Drafting e SeniorLawyer Agent
+│   ├── research/        LegalSourceProvider + AllowlistLegalSourceProvider
+│   │                    (pesquisa restrita a domínios autorizados)
+│   └── prompts/         PromptTemplates e SpecializedPromptTemplates
 └── exception/          Exceções de domínio (PDF inválido, arquivo grande, erro de IA)
 ```
 
@@ -195,15 +201,115 @@ Resposta (resumida — todos os campos são retornados de fato):
 }
 ```
 
+## Análise especializada (8 agentes)
+
+Concluída a análise base, a resposta de `GET /api/v1/processos/analises/{id}`
+passa a trazer o bloco `analiseEspecializada`, com o endpoint e as opções
+disponíveis. É uma etapa **opcional**, executada por escolha do advogado.
+
+| # | Agente | O que faz |
+|---|--------|-----------|
+| 1 | `ProcessAgent` | Analisa o processo completo: fase, teses, pontos controvertidos, forças, fragilidades, estratégia e prognóstico |
+| 2 | `ContractAgent` | Analisa contratos: cláusulas de risco, obrigações, multas, prazos, condições e inconsistências |
+| 3 | `DocumentAgent` | Classifica os documentos automaticamente (natureza do material + categoria de cada peça) |
+| 4 | `LegalResearchAgent` | Pesquisa legislação/jurisprudência **somente em fontes autorizadas e rastreáveis**, apresentando as referências utilizadas |
+| 5 | `DeadlineAgent` | Extrai datas e eventos importantes (prazos, audiências, vencimentos) |
+| 6 | `EvidenceAgent` | Relaciona cada alegação com os documentos que podem sustentá-la e aponta lacunas probatórias |
+| 7 | `DraftingAgent` | Gera rascunhos de parecer, manifestação, relatório, petição e e-mail ao cliente — **sempre para revisão do advogado** |
+| 8 | `SeniorLawyerAgent` | Agente **orquestrador**: recebe o trabalho dos demais e produz o resultado final |
+
+### Fluxo
+
+```
+Análise base concluída (AnaliseJob guarda texto extraído + resultado)
+   │
+   ▼
+DocumentAgent  (classifica e decide o roteamento)
+   │
+   ├──► ProcessAgent    (se o material parecer processo, ou forcarProcesso=true)
+   └──► ContractAgent   (se o material parecer contrato,  ou forcarContrato=true)
+   │
+   ▼
+DeadlineAgent ──► EvidenceAgent ──► LegalResearchAgent (opcional)
+   │
+   ▼
+DraftingAgent  (rascunhos solicitados, opcional)
+   │
+   ▼
+SeniorLawyerAgent  ──►  AnaliseEspecializadaResponse (JSON)
+```
+
+A falha de um agente especialista não interrompe o fluxo: o erro entra em
+`avisos` e o Senior Lawyer trata o item como lacuna.
+
+### Endpoints
+
+```bash
+# 1. dispara a análise especializada sobre uma análise base já concluída
+curl -X POST http://localhost:8080/api/v1/processos/analises/{idDaAnaliseBase}/especializada \
+  -H "Content-Type: application/json" \
+  -d '{
+        "parteRepresentada": "Construtora Alfa Ltda",
+        "contextoAdicional": "Defendemos a ré; objetivo é reduzir a multa contratual.",
+        "pesquisaJuridica": true,
+        "consultaPesquisa": "onus da prova em acao de cobranca CPC art. 373",
+        "forcarContrato": true,
+        "rascunhos": ["PARECER", "EMAIL_CLIENTE"]
+      }'
+# -> 202 Accepted + { "id": "...", "status": "RECEBIDO", ... }
+
+# 2. acompanha o progresso / obtém o resultado
+curl http://localhost:8080/api/v1/processos/analises-especializadas/{id}
+```
+
+Campos do corpo (todos opcionais): `parteRepresentada`, `contextoAdicional`,
+`pesquisaJuridica`, `consultaPesquisa` (se vazia, é derivada do caso),
+`forcarProcesso`, `forcarContrato`, `rascunhos` (`PARECER`, `MANIFESTACAO`,
+`RELATORIO`, `PETICAO`, `EMAIL_CLIENTE`).
+
+O resultado (`AnaliseEspecializadaResponse`) traz `classificacaoDocumental`,
+`analiseProcessual`, `analiseContratual`, `agendaPrazos`, `matrizEvidencias`,
+`pesquisaJuridica`, `rascunhos`, `parecerSenior`, além de `agentesExecutados`
+e `avisos`.
+
+### Pesquisa jurídica: só fontes autorizadas e rastreáveis
+
+O `LegalResearchAgent` nunca cita de memória. O conteúdo vem do
+`AllowlistLegalSourceProvider`, e há três travas:
+
+1. **Allowlist de domínios** — só URLs cujo host esteja em
+   `legal-analyzer.legal-research.dominios-autorizados` são baixadas; a
+   verificação é refeita **após cada redirecionamento**.
+2. **O modelo só vê o texto baixado** — o prompt recebe apenas os trechos
+   recuperados, com nome da fonte e URL.
+3. **Validação da saída** — toda referência cuja URL não corresponda a uma
+   das URLs efetivamente consultadas é **descartada**, e o descarte é
+   registrado em `lacunas`. As referências mantidas vêm com `url`,
+   `trechoRelevante` literal, `consultadoEm` e `verificada: true`.
+
+A pesquisa vem **desabilitada por padrão** (`LEGAL_RESEARCH_ENABLED=false`).
+Desligada, o agente responde `pesquisaRealizada: false` com o motivo — e
+nenhuma legislação ou jurisprudência é citada. Fontes e domínios padrão
+(LexML, STF, STJ, Planalto, CNJ, Senado, Câmara, DOU) ficam em
+`application.yml`; para usar uma base própria, inclua o domínio na allowlist
+e a `url-template` (com `{consulta}`) na lista de fontes.
+
+### Rascunhos: revisão obrigatória
+
+Todo rascunho sai com `avisoRevisao` explícito, `pontosDeAtencao` e
+`lacunasParaPreencher`. O prompt proíbe inventar número de processo, vara,
+valores, datas e fundamentos legais — nesses pontos o texto usa marcadores
+`[CONFERIR]`, `[COMPLETAR]` e `[FUNDAMENTO A VALIDAR]`.
+
 ## Limitações e próximos passos (para uso em produção)
 
 Este projeto é um ponto de partida sólido, mas antes de ir para produção com
 documentos jurídicos reais, considere:
 
-- **Processamento assíncrono**: hoje o endpoint é síncrono e pode demorar
-  (vários chunks × várias chamadas de IA). Para processos muito longos, vale
-  migrar para um padrão de job assíncrono (`POST /analisar` retorna um ID,
-  `GET /processos/{id}` consulta o status/resultado).
+- **Persistência dos jobs**: as análises (base e especializada) rodam de forma
+  assíncrona, mas o estado fica em memória (`ConcurrentHashMap`). Um restart
+  perde os jobs em andamento e os resultados — para produção, mova para banco
+  ou cache distribuído.
 - **PDFs escaneados / sem camada de texto**: `PdfTextExtractionService`
   lança erro se não conseguir extrair texto. Adicionar OCR (ex.: Tesseract)
   como fallback é recomendado para digitalizações.
@@ -233,8 +339,16 @@ documentos jurídicos reais, considere:
 mvn test
 ```
 
-Inclui testes unitários para `PdfTextChunker` e para `OllamaAiClient`
-(este último usa um servidor HTTP local que simula o `/api/chat` do Ollama,
-validando o payload enviado e o tratamento de erros sem precisar de um modelo
-carregado). Recomenda-se complementar com testes de integração usando um
-`AiClient` "fake" para validar a orquestração completa.
+Cobertura atual:
+
+- `PdfTextChunkerTest` — divisão de texto com sobreposição.
+- `OllamaAiClientTest` — servidor HTTP local simulando o `/api/chat` do Ollama:
+  payload enviado e tratamento de erros, sem precisar de modelo carregado.
+- `AiProviderSelectionTest` / `AnthropicProviderSelectionTest` — seleção do
+  provedor via `legal-analyzer.ai.provider`.
+- `AllowlistLegalSourceProviderTest` — allowlist de domínios, recusa de host
+  não autorizado, limpeza de HTML, truncamento e limite de fontes.
+- `SpecializedAnalysisOrchestratorTest` — roteamento entre Process e Contract
+  Agent, `forcarContrato`, pesquisa desabilitada sem citações, descarte de
+  referência com URL não rastreável, aviso de revisão nos rascunhos e
+  isolamento de falha de agente.
