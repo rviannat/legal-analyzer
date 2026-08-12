@@ -6,3 +6,7 @@ target/
 .DS_Store
 .env
 application-local.yml
+
+# Patches e diffs gerados para revisao (artefatos de entrega, nao fonte)
+*.patch
+*.diff
