@@ -13,6 +13,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -44,7 +46,7 @@ public class DataJudService {
 
         String tribunal = resolverTribunal(digits);
         if (tribunal == null) return new DataJudInfo(DataJudStatus.INDISPONIVEL, numeroProcesso, null, null, false, null, null, null, null, null,
-                "Tribunal não mapeado para a numeração CNJ identificada.", Instant.now());
+                "Tribunal não mapeado para a numeração CNJ identificada.", Instant.now(), List.of());
 
         String endpoint = properties.dataJud().baseUrlOuPadrao() + "/api_publica_" + tribunal + "/_search";
         try {
@@ -53,31 +55,26 @@ public class DataJudService {
                     .timeout(Duration.ofSeconds(properties.dataJud().timeoutSecondsOuPadrao()))
                     .header("Authorization", "APIKey " + properties.dataJud().apiKey())
                     .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .build();
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 return new DataJudInfo(DataJudStatus.INDISPONIVEL, numeroProcesso, tribunal, endpoint, false, null, null, null, null, null,
-                        "DataJud respondeu HTTP " + response.statusCode() + ".", Instant.now());
+                        "DataJud respondeu HTTP " + response.statusCode() + ".", Instant.now(), List.of());
             }
             JsonNode root = mapper.readTree(response.body());
             JsonNode hits = root.path("hits").path("hits");
             if (!hits.isArray() || hits.isEmpty()) {
                 return new DataJudInfo(DataJudStatus.NAO_ENCONTRADO, numeroProcesso, tribunal, endpoint, false, 0, null, null, null, null,
-                        "Processo não localizado na base pública do DataJud. Processos em segredo de justiça não são disponibilizados pela API pública.", Instant.now());
+                        "Processo não localizado na base pública do DataJud. Processos em segredo de justiça não são disponibilizados pela API pública.", Instant.now(), List.of());
             }
             JsonNode source = hits.get(0).path("_source");
-            JsonNode movimentos = source.path("movimentos");
-            String ultima = null;
-            if (movimentos.isArray() && !movimentos.isEmpty()) {
-                JsonNode latest = movimentos.get(0);
-                for (JsonNode m : movimentos) if (m.path("dataHora").asText("").compareTo(latest.path("dataHora").asText("")) > 0) latest = m;
-                ultima = latest.path("dataHora").asText(null) + " — " + latest.path("nome").asText("Movimentação");
-            }
-            return new DataJudInfo(DataJudStatus.ENCONTRADO, numeroProcesso, tribunal, endpoint, true,
-                    movimentos.isArray() ? movimentos.size() : 0, ultima,
+            List<DataJudMovimento> movimentos = extrairMovimentos(source.path("movimentos"));
+            DataJudMovimento latest = movimentos.stream().filter(m -> m.dataInstant() != null)
+                    .max(java.util.Comparator.comparing(DataJudMovimento::dataInstant)).orElse(movimentos.isEmpty() ? null : movimentos.get(0));
+            String ultima = latest == null ? null : latest.dataHora() + " — " + latest.nome();
+            return new DataJudInfo(DataJudStatus.ENCONTRADO, numeroProcesso, tribunal, endpoint, true, movimentos.size(), ultima,
                     source.path("classe").path("nome").asText(null), source.path("orgaoJulgador").path("nome").asText(null),
-                    source.path("grau").asText(null), "Processo localizado na base pública do DataJud/CNJ.", Instant.now());
+                    source.path("grau").asText(null), "Processo localizado na base pública do DataJud/CNJ.", Instant.now(), movimentos);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return indisponivel(numeroProcesso, tribunal, endpoint, "Consulta DataJud interrompida.");
@@ -87,8 +84,30 @@ public class DataJudService {
         }
     }
 
+    private List<DataJudMovimento> extrairMovimentos(JsonNode node) {
+        if (!node.isArray()) return List.of();
+        List<DataJudMovimento> result = new ArrayList<>();
+        for (JsonNode m : node) {
+            String data = m.path("dataHora").asText(null);
+            String nome = m.path("nome").asText(null);
+            String complemento = extrairComplemento(m.path("complementosTabelados"));
+            if ((data != null && !data.isBlank()) || (nome != null && !nome.isBlank())) result.add(new DataJudMovimento(data, nome, complemento));
+        }
+        return List.copyOf(result);
+    }
+
+    private String extrairComplemento(JsonNode node) {
+        if (!node.isArray()) return null;
+        List<String> result = new ArrayList<>();
+        for (JsonNode c : node) {
+            String texto = (c.path("nome").asText("") + " " + c.path("valor").asText("")).trim();
+            if (!texto.isBlank()) result.add(texto);
+        }
+        return result.isEmpty() ? null : String.join("; ", result);
+    }
+
     private DataJudInfo indisponivel(String numero, String tribunal, String endpoint, String mensagem) {
-        return new DataJudInfo(DataJudStatus.INDISPONIVEL, numero, tribunal, endpoint, false, null, null, null, null, null, mensagem, Instant.now());
+        return new DataJudInfo(DataJudStatus.INDISPONIVEL, numero, tribunal, endpoint, false, null, null, null, null, null, mensagem, Instant.now(), List.of());
     }
 
     static String resolverTribunal(String digits) {
