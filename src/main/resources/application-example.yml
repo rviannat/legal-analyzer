@@ -1,11 +1,11 @@
 # Copie este arquivo de referência de variáveis de ambiente para configurar
 # a aplicação. As mesmas chaves em application.yml já leem estas variáveis
-# de ambiente automaticamente (ex.: ${OLLAMA_MODEL:llama3.1:8b}).
+# de ambiente automaticamente (ex.: ${OLLAMA_MODEL:llama3.2:3b}).
 #
 # --- Padrão: Ollama (modelo local, nenhum dado sai da máquina) ---
 #
 #   export AI_PROVIDER="ollama"
-#   export OLLAMA_MODEL="llama3.1:8b"
+#   export OLLAMA_MODEL="llama3.2:3b"
 #   export OLLAMA_BASE_URL="http://localhost:11434/api/chat"
 #   export OLLAMA_MAX_TOKENS="4096"
 #   export OLLAMA_TEMPERATURE="0.2"

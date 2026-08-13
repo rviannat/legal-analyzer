@@ -73,7 +73,7 @@ legal-analyzer:
   # sao opcionais e, se falharem, o indice continua respondendo em modo lexico.
   rag:
     # requer: ollama pull nomic-embed-text
-    embeddings-habilitados: ${RAG_EMBEDDINGS_ENABLED:true}
+    embeddings-habilitados: ${RAG_EMBEDDINGS_ENABLED:false}
     embedding-model: ${RAG_EMBEDDING_MODEL:nomic-embed-text}
     embedding-base-url: ${RAG_EMBEDDING_BASE_URL:http://localhost:11434/api/embeddings}
     embedding-timeout-seconds: ${RAG_EMBEDDING_TIMEOUT_SECONDS:60}
