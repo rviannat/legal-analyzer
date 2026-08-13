@@ -6,6 +6,7 @@ import com.rafaelvianna.legalanalyzer.async.AnaliseJob;
 import com.rafaelvianna.legalanalyzer.async.AnaliseJobResponse;
 import com.rafaelvianna.legalanalyzer.async.AnaliseJobService;
 import com.rafaelvianna.legalanalyzer.config.AppProperties;
+import com.rafaelvianna.legalanalyzer.datajud.DataJudAuditoria;
 import com.rafaelvianna.legalanalyzer.datajud.DataJudInfo;
 import com.rafaelvianna.legalanalyzer.exception.DocumentTooLargeException;
 import com.rafaelvianna.legalanalyzer.exception.PdfProcessingException;
@@ -40,6 +41,12 @@ public class ProcessoAnaliseController {
     @GetMapping("/analises/{id}/datajud")
     public ResponseEntity<DataJudInfo> consultarDataJud(@PathVariable String id) {
         return ResponseEntity.ok(jobService.buscar(id).dataJud());
+    }
+
+    @GetMapping("/analises/{id}/datajud/auditoria")
+    public ResponseEntity<DataJudAuditoria> consultarAuditoriaDataJud(@PathVariable String id) {
+        AnaliseJob job = jobService.buscar(id);
+        return ResponseEntity.ok(DataJudAuditoria.de(job.dataJud(), job.resultado() == null ? java.util.List.of() : job.resultado().partes()));
     }
 
     @PostMapping(value = "/analises/{id}/especializada", consumes = MediaType.APPLICATION_JSON_VALUE)
