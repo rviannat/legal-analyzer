@@ -14,7 +14,9 @@ spring:
 legal-analyzer:
   ai:
     model: ${OLLAMA_MODEL:llama3.2:3b}
-    max-tokens: ${OLLAMA_MAX_TOKENS:1024}
+    # Limite deliberadamente menor para Ollama em CPU: respostas JSON menores
+    # reduzem tempo de inferência e pressão de memória.
+    max-tokens: ${OLLAMA_MAX_TOKENS:768}
     context-window: ${OLLAMA_CONTEXT_WINDOW:2048}
     base-url: ${OLLAMA_BASE_URL:http://localhost:11434/api/chat}
     provider: ${AI_PROVIDER:ollama}
@@ -25,14 +27,13 @@ legal-analyzer:
     keep-alive: ${OLLAMA_KEEP_ALIVE:30m}
 
   pdf:
-    # Limite da validação da aplicação. Deve existir também em AppProperties;
-    # sem esta propriedade o record recebe 0 e todo PDF é rejeitado.
     max-file-size-bytes: ${MAX_FILE_SIZE_BYTES:26214400}
-    chunk-char-size: ${PDF_CHUNK_CHAR_SIZE:6000}
-    chunk-overlap-chars: ${PDF_CHUNK_OVERLAP_CHARS:500}
+    # Chunks menores deixam o llama3.2:3b muito mais responsivo em CPU.
+    chunk-char-size: ${PDF_CHUNK_CHAR_SIZE:3500}
+    chunk-overlap-chars: ${PDF_CHUNK_OVERLAP_CHARS:250}
 
   especializada:
-    amostra-texto-chars: ${ESPECIALIZADA_AMOSTRA_CHARS:16000}
+    amostra-texto-chars: ${ESPECIALIZADA_AMOSTRA_CHARS:6000}
     max-rascunhos: ${ESPECIALIZADA_MAX_RASCUNHOS:5}
     max-chars-rascunho: ${ESPECIALIZADA_MAX_CHARS_RASCUNHO:8000}
   legal-research:
