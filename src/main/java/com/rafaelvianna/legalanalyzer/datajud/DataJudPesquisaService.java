@@ -3,10 +3,23 @@ package com.rafaelvianna.legalanalyzer.datajud;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.rafaelvianna.legalanalyzer.async.AnaliseJobResponse;
+import com.rafaelvianna.legalanalyzer.async.AnaliseJobService;
 import com.rafaelvianna.legalanalyzer.config.AppProperties;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.PDPageContentStream.AppendMode;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.File;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -25,73 +38,26 @@ public class DataJudPesquisaService {
     private final ObjectMapper mapper;
     private final HttpClient client;
     private final DataJudService dataJudService;
-    public DataJudPesquisaService(AppProperties properties, ObjectMapper mapper, DataJudService dataJudService) {
-        this.properties = properties; this.mapper = mapper; this.dataJudService = dataJudService;
-        this.client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(properties.dataJud().timeoutSecondsOuPadrao())).build();
+    private final AnaliseJobService analiseJobService;
+    public DataJudPesquisaService(AppProperties properties, ObjectMapper mapper, DataJudService dataJudService, AnaliseJobService analiseJobService) {
+        this.properties=properties; this.mapper=mapper; this.dataJudService=dataJudService; this.analiseJobService=analiseJobService;
+        this.client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(properties.dataJud().timeoutSecondsOuPadrao())).build();
     }
-    public DataJudInfo infoPorCnj(String numeroProcesso) { return dataJudService.consultar(numeroProcesso); }
-    public DataJudPesquisaResponse pesquisarCnj(String numeroProcesso) {
-        DataJudInfo info = infoPorCnj(numeroProcesso);
-        return new DataJudPesquisaResponse(UUID.randomUUID().toString(), "CNJ", info.tribunal(), null, true, info.mensagem(), info.consultadoEm(), info, List.of(), 0);
-    }
-    public DataJudPesquisaResponse pesquisarPorCpf(String cpf, String tribunal) {
-        DataJudInfo info = infoPorCpf(cpf, tribunal);
-        return new DataJudPesquisaResponse(UUID.randomUUID().toString(), "CPF", info.tribunal(), cpf, true, info.mensagem(), info.consultadoEm(), info, List.of(), info.encontrado() ? 1 : 0);
-    }
-    public DataJudInfo infoPorCpf(String cpf, String tribunal) {
-        String digits = cpf == null ? "" : cpf.replaceAll("\\D", "");
-        if (!digits.matches("\\d{11}")) throw new IllegalArgumentException("CPF inválido. Informe 11 dígitos.");
-        if (!properties.dataJud().configurado()) return new DataJudInfo(DataJudStatus.NAO_CONFIGURADO, cpf, tribunal, null, false, null, null, null, null, null, "Integração DataJud não configurada.", Instant.now(), List.of());
-        List<String> candidatos = tribunal == null || tribunal.isBlank() ? TRIBUNAIS : List.of(normalizarTribunal(tribunal));
-        log.info("DataJud CPF: iniciando pesquisa para CPF mascarado ***{}. tribunais={}", digits.substring(8), candidatos.size());
-        for (String alias : candidatos) {
-            if (alias == null || alias.isBlank()) continue;
-            try {
-                DataJudInfo info = consultarDocumento(alias, digits);
-                if (info.encontrado()) { log.info("DataJud CPF: processo encontrado no tribunal={} CNJ={}", alias, info.numeroProcesso()); return info; }
-            } catch (Exception e) { log.debug("DataJud CPF: tribunal={} sem resultado/erro={}", alias, e.getMessage()); }
-        }
-        return new DataJudInfo(DataJudStatus.NAO_ENCONTRADO, cpf, tribunal, null, false, 0, null, null, null, null, "Nenhum processo público localizado para este CPF no(s) tribunal(is) consultado(s). A API pública respeita as regras de proteção de dados e pode não expor o documento da parte.", Instant.now(), List.of());
-    }
-    private DataJudInfo consultarDocumento(String alias, String cpf) throws Exception {
-        String endpoint = properties.dataJud().baseUrlOuPadrao() + "/api_publica_" + alias + "/_search";
-        ObjectNode query = mapper.createObjectNode();
-        query.put("size", 1);
-        ObjectNode match = mapper.createObjectNode();
-        match.put("partes.numeroDocumentoPrincipal", cpf);
-        query.set("query", mapper.createObjectNode().set("match", match));
-        HttpRequest request = HttpRequest.newBuilder(URI.create(endpoint)).timeout(Duration.ofSeconds(properties.dataJud().timeoutSecondsOuPadrao())).header("Authorization", "APIKey " + properties.dataJud().apiKey()).header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(query.toString())).build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() < 200 || response.statusCode() >= 300) return new DataJudInfo(DataJudStatus.INDISPONIVEL, cpf, alias, endpoint, false, null, null, null, null, null, "DataJud respondeu HTTP " + response.statusCode() + ".", Instant.now(), List.of());
-        JsonNode hits = mapper.readTree(response.body()).path("hits").path("hits");
-        if (!hits.isArray() || hits.isEmpty()) return new DataJudInfo(DataJudStatus.NAO_ENCONTRADO, cpf, alias, endpoint, false, 0, null, null, null, null, "Nenhum processo encontrado neste tribunal.", Instant.now(), List.of());
-        JsonNode source = hits.get(0).path("_source");
-        String cnj = source.path("numeroProcesso").asText(null);
-        List<DataJudMovimento> movimentos = new ArrayList<>();
-        JsonNode ms = source.path("movimentos");
-        if (ms.isArray()) for (JsonNode m : ms) movimentos.add(new DataJudMovimento(m.path("dataHora").asText(null), m.path("nome").asText(null), null));
-        return new DataJudInfo(DataJudStatus.ENCONTRADO, cnj, alias, endpoint, true, movimentos.size(), movimentos.isEmpty() ? null : movimentos.get(movimentos.size()-1).dataHora() + " — " + movimentos.get(movimentos.size()-1).nome(), source.path("classe").path("nome").asText(null), source.path("orgaoJulgador").path("nome").asText(null), source.path("grau").asText(null), "Processo localizado pelo documento da parte no DataJud.", Instant.now(), movimentos);
-    }
-    public DataJudPesquisaResponse pesquisarPorTribunalAssunto(String tribunal, String assunto, int tamanho) {
-        if (!properties.dataJud().configurado()) return respostaFalha(tribunal, assunto, "Integração DataJud não configurada.");
-        String alias = normalizarTribunal(tribunal); if (alias == null) return respostaFalha(tribunal, assunto, "Informe o alias do tribunal.");
-        if (assunto == null || assunto.isBlank()) return respostaFalha(alias, assunto, "Informe o código TPU ou nome do assunto.");
-        int size = Math.max(1, Math.min(tamanho <= 0 ? 10 : tamanho, 25)); String endpoint = properties.dataJud().baseUrlOuPadrao() + "/api_publica_" + alias + "/_search";
-        try {
-            ObjectNode query = mapper.createObjectNode(); ObjectNode bool = mapper.createObjectNode(); var must = mapper.createArrayNode();
-            ObjectNode assuntoMatch = mapper.createObjectNode(); if (assunto.matches("\\d+")) assuntoMatch.set("assuntos.codigo", mapper.getNodeFactory().numberNode(Long.parseLong(assunto))); else assuntoMatch.put("assuntos.nome", assunto);
-            must.add(mapper.createObjectNode().set("match", assuntoMatch)); var should = mapper.createArrayNode();
-            for (String termo : List.of("baixa","baixado","arquivamento","arquivado","extincao","extinto","transito em julgado")) should.add(mapper.createObjectNode().set("match", mapper.createObjectNode().put("movimentos.nome", termo)));
-            ObjectNode encerramento = mapper.createObjectNode(); encerramento.set("should", should); encerramento.put("minimum_should_match", 1); must.add(encerramento); bool.set("must", must); query.set("query", mapper.createObjectNode().set("bool", bool)); query.put("size", size);
-            HttpRequest request = HttpRequest.newBuilder(URI.create(endpoint)).timeout(Duration.ofSeconds(properties.dataJud().timeoutSecondsOuPadrao())).header("Authorization", "APIKey " + properties.dataJud().apiKey()).header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(query.toString())).build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString()); if (response.statusCode() < 200 || response.statusCode() >= 300) return respostaFalha(alias, assunto, "DataJud respondeu HTTP " + response.statusCode() + ".");
-            JsonNode hits = mapper.readTree(response.body()).path("hits").path("hits"); List<DataJudAmostra> amostra = new ArrayList<>(); if (hits.isArray()) for (JsonNode hit : hits) amostra.add(mapearAmostra(hit.path("_source")));
-            return new DataJudPesquisaResponse(UUID.randomUUID().toString(), "ORGAO_ASSUNTO", alias, assunto, true, amostra.isEmpty() ? "Nenhum processo da amostra foi localizado." : "Amostra oficial localizada no DataJud.", Instant.now(), null, amostra, amostra.size());
-        } catch (InterruptedException e) { Thread.currentThread().interrupt(); return respostaFalha(alias, assunto, "Consulta DataJud interrompida."); }
-        catch (Exception e) { log.warn("Falha na pesquisa agregada DataJud tribunal={} assunto={}: {}", alias, assunto, e.getMessage()); return respostaFalha(alias, assunto, "DataJud indisponível no momento: " + e.getMessage()); }
-    }
-    private DataJudPesquisaResponse respostaFalha(String tribunal, String assunto, String mensagem) { return new DataJudPesquisaResponse(UUID.randomUUID().toString(), "ORGAO_ASSUNTO", tribunal, assunto, false, mensagem, Instant.now(), null, List.of(), 0); }
-    private DataJudAmostra mapearAmostra(JsonNode source) { List<String> assuntos = new ArrayList<>(); JsonNode a = source.path("assuntos"); if (a.isArray()) for (JsonNode x : a) { String c=x.path("codigo").asText(""); String n=x.path("nome").asText(""); if (!c.isBlank()||!n.isBlank()) assuntos.add(c.isBlank()?n:c+" — "+n); } JsonNode ms=source.path("movimentos"); String ultima=null, ultimaData=null; boolean baixa=false; if(ms.isArray()) for(JsonNode m:ms){String n=m.path("nome").asText("");String d=m.path("dataHora").asText(""); if(!n.isBlank()){if(baixa(n))baixa=true;if(ultimaData==null||d.compareTo(ultimaData)>0){ultimaData=d;ultima=d+" — "+n;}}} return new DataJudAmostra(source.path("numeroProcesso").asText(null),source.path("classe").path("codigo").asText(null),source.path("classe").path("nome").asText(null),assuntos,source.path("grau").asText(null),source.path("orgaoJulgador").path("nome").asText(null),source.path("dataAjuizamento").asText(null),ultima,baixa); }
+    public DataJudInfo infoPorCnj(String numeroProcesso){return dataJudService.consultar(numeroProcesso);}
+    public DataJudPesquisaResponse pesquisarCnj(String numeroProcesso){DataJudInfo info=infoPorCnj(numeroProcesso);return new DataJudPesquisaResponse(UUID.randomUUID().toString(),"CNJ",info.tribunal(),null,true,info.mensagem(),info.consultadoEm(),info,List.of(),0);}
+    public AnaliseJobResponse iniciarProcessamentoPorCnj(String numeroProcesso){DataJudInfo info=infoPorCnj(numeroProcesso);return iniciarDataJud(info,"consulta CNJ");}
+    public AnaliseJobResponse iniciarProcessamentoPorCpf(String cpf,String tribunal){DataJudInfo info=infoPorCpf(cpf,tribunal);return iniciarDataJud(info,"consulta CPF");}
+    private AnaliseJobResponse iniciarDataJud(DataJudInfo info,String origem){if(info==null||!info.encontrado())throw new IllegalArgumentException("Processo não localizado no DataJud; o fluxo de análise não foi iniciado.");try{return analiseJobService.iniciar(new DataJudMultipartFile(gerarPdf(info),"processo-datajud-"+info.numeroProcesso()+".pdf"));}catch(Exception e){throw new IllegalStateException("Processo encontrado no DataJud, mas não foi possível iniciar a análise: "+e.getMessage(),e);}}
+    private byte[] gerarPdf(DataJudInfo info)throws IOException{try(PDDocument doc=new PDDocument();ByteArrayOutputStream out=new ByteArrayOutputStream()){PDPage page=new PDPage(PDRectangle.A4);doc.addPage(page);try(PDPageContentStream s=new PDPageContentStream(doc,page,AppendMode.APPEND,false,true)){s.beginText();s.setFont(PDType1Font.HELVETICA,9);s.setLeading(12);s.newLineAtOffset(40,800);linha(s,"PROCESSO LOCALIZADO NO DATAJUD/CNJ");linha(s,"Numero CNJ: "+info.numeroProcesso());linha(s,"Tribunal: "+nvl(info.tribunal()));linha(s,"Grau: "+nvl(info.grau()));linha(s,"Classe: "+nvl(info.classeProcessual()));linha(s,"Orgao julgador: "+nvl(info.orgaoJulgador()));linha(s,"");linha(s,"MOVIMENTACOES OFICIAIS:");for(DataJudMovimento m:info.movimentos())linha(s,(m.dataHora()==null?"":m.dataHora())+" - "+nvl(m.nome()));s.endText();}doc.save(out);return out.toByteArray();}}
+    private void linha(PDPageContentStream s,String t)throws IOException{s.showText(t.replaceAll("[^\\x20-\\x7E]"," "));s.newLine();}
+    private String nvl(String v){return v==null?"nao informado":v;}
+    public DataJudPesquisaResponse pesquisarPorCpf(String cpf,String tribunal){DataJudInfo info=infoPorCpf(cpf,tribunal);return new DataJudPesquisaResponse(UUID.randomUUID().toString(),"CPF",info.tribunal(),cpf,true,info.mensagem(),info.consultadoEm(),info,List.of(),info.encontrado()?1:0);}
+    public DataJudInfo infoPorCpf(String cpf,String tribunal){String digits=cpf==null?"":cpf.replaceAll("\\D","");if(!digits.matches("\\d{11}"))throw new IllegalArgumentException("CPF inválido. Informe 11 dígitos.");if(!properties.dataJud().configurado())return new DataJudInfo(DataJudStatus.NAO_CONFIGURADO,cpf,tribunal,null,false,null,null,null,null,null,"Integração DataJud não configurada.",Instant.now(),List.of());List<String> candidatos=tribunal==null||tribunal.isBlank()?TRIBUNAIS:List.of(normalizarTribunal(tribunal));log.info("DataJud CPF: iniciando pesquisa para CPF mascarado ***{}. tribunais={}",digits.substring(8),candidatos.size());for(String alias:candidatos){if(alias==null)continue;try{DataJudInfo info=consultarDocumento(alias,digits);if(info.encontrado()){log.info("DataJud CPF: processo encontrado tribunal={} CNJ={}",alias,info.numeroProcesso());return info;}}catch(Exception e){log.debug("DataJud CPF tribunal={} erro={}",alias,e.getMessage());}}return new DataJudInfo(DataJudStatus.NAO_ENCONTRADO,cpf,tribunal,null,false,0,null,null,null,null,"Nenhum processo público localizado para este CPF. A API pública respeita as regras de proteção de dados e pode não expor o documento da parte.",Instant.now(),List.of());}
+    private DataJudInfo consultarDocumento(String alias,String cpf)throws Exception{String endpoint=properties.dataJud().baseUrlOuPadrao()+"/api_publica_"+alias+"/_search";ObjectNode q=mapper.createObjectNode();q.put("size",1);q.set("query",mapper.createObjectNode().set("match",mapper.createObjectNode().put("partes.numeroDocumentoPrincipal",cpf)));HttpRequest req=HttpRequest.newBuilder(URI.create(endpoint)).timeout(Duration.ofSeconds(properties.dataJud().timeoutSecondsOuPadrao())).header("Authorization","APIKey "+properties.dataJud().apiKey()).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(q.toString())).build();HttpResponse<String> r=client.send(req,HttpResponse.BodyHandlers.ofString());if(r.statusCode()<200||r.statusCode()>=300)return new DataJudInfo(DataJudStatus.INDISPONIVEL,cpf,alias,endpoint,false,null,null,null,null,null,"DataJud respondeu HTTP "+r.statusCode()+".",Instant.now(),List.of());JsonNode hits=mapper.readTree(r.body()).path("hits").path("hits");if(!hits.isArray()||hits.isEmpty())return new DataJudInfo(DataJudStatus.NAO_ENCONTRADO,cpf,alias,endpoint,false,0,null,null,null,null,"Nenhum processo encontrado neste tribunal.",Instant.now(),List.of());JsonNode source=hits.get(0).path("_source");String cnj=source.path("numeroProcesso").asText(null);List<DataJudMovimento> ms=new ArrayList<>();JsonNode mn=source.path("movimentos");if(mn.isArray())for(JsonNode m:mn)ms.add(new DataJudMovimento(m.path("dataHora").asText(null),m.path("nome").asText(null),null));return new DataJudInfo(DataJudStatus.ENCONTRADO,cnj,alias,endpoint,true,ms.size(),ms.isEmpty()?null:ms.get(ms.size()-1).dataHora()+" — "+ms.get(ms.size()-1).nome(),source.path("classe").path("nome").asText(null),source.path("orgaoJulgador").path("nome").asText(null),source.path("grau").asText(null),"Processo localizado pelo documento da parte no DataJud.",Instant.now(),ms);}
+    public DataJudPesquisaResponse pesquisarPorTribunalAssunto(String tribunal,String assunto,int tamanho){if(!properties.dataJud().configurado())return respostaFalha(tribunal,assunto,"Integração DataJud não configurada.");String alias=normalizarTribunal(tribunal);if(alias==null)return respostaFalha(tribunal,assunto,"Informe o alias do tribunal.");if(assunto==null||assunto.isBlank())return respostaFalha(alias,assunto,"Informe o código TPU ou nome do assunto.");int size=Math.max(1,Math.min(tamanho<=0?10:tamanho,25));String endpoint=properties.dataJud().baseUrlOuPadrao()+"/api_publica_"+alias+"/_search";try{ObjectNode q=mapper.createObjectNode();ObjectNode bool=mapper.createObjectNode();var must=mapper.createArrayNode();ObjectNode am=mapper.createObjectNode();if(assunto.matches("\\d+"))am.set("assuntos.codigo",mapper.getNodeFactory().numberNode(Long.parseLong(assunto)));else am.put("assuntos.nome",assunto);must.add(mapper.createObjectNode().set("match",am));var should=mapper.createArrayNode();for(String termo:List.of("baixa","baixado","arquivamento","arquivado","extincao","extinto","transito em julgado"))should.add(mapper.createObjectNode().set("match",mapper.createObjectNode().put("movimentos.nome",termo)));ObjectNode encerramento=mapper.createObjectNode();encerramento.set("should",should);encerramento.put("minimum_should_match",1);must.add(encerramento);bool.set("must",must);q.set("query",mapper.createObjectNode().set("bool",bool));q.put("size",size);HttpRequest req=HttpRequest.newBuilder(URI.create(endpoint)).timeout(Duration.ofSeconds(properties.dataJud().timeoutSecondsOuPadrao())).header("Authorization","APIKey "+properties.dataJud().apiKey()).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(q.toString())).build();HttpResponse<String> r=client.send(req,HttpResponse.BodyHandlers.ofString());if(r.statusCode()<200||r.statusCode()>=300)return respostaFalha(alias,assunto,"DataJud respondeu HTTP "+r.statusCode()+".");JsonNode hits=mapper.readTree(r.body()).path("hits").path("hits");List<DataJudAmostra> a=new ArrayList<>();if(hits.isArray())for(JsonNode h:hits)a.add(mapearAmostra(h.path("_source")));return new DataJudPesquisaResponse(UUID.randomUUID().toString(),"ORGAO_ASSUNTO",alias,assunto,true,a.isEmpty()?"Nenhum processo da amostra foi localizado.":"Amostra oficial localizada no DataJud.",Instant.now(),null,a,a.size());}catch(InterruptedException e){Thread.currentThread().interrupt();return respostaFalha(alias,assunto,"Consulta DataJud interrompida.");}catch(Exception e){log.warn("Falha na pesquisa agregada DataJud tribunal={} assunto={}: {}",alias,assunto,e.getMessage());return respostaFalha(alias,assunto,"DataJud indisponível no momento: "+e.getMessage());}}
+    private DataJudPesquisaResponse respostaFalha(String t,String a,String m){return new DataJudPesquisaResponse(UUID.randomUUID().toString(),"ORGAO_ASSUNTO",t,a,false,m,Instant.now(),null,List.of(),0);}
+    private DataJudAmostra mapearAmostra(JsonNode s){List<String> assuntos=new ArrayList<>();JsonNode an=s.path("assuntos");if(an.isArray())for(JsonNode x:an){String c=x.path("codigo").asText("");String n=x.path("nome").asText("");if(!c.isBlank()||!n.isBlank())assuntos.add(c.isBlank()?n:c+" — "+n);}JsonNode ms=s.path("movimentos");String ultima=null,ud=null;boolean baixa=false;if(ms.isArray())for(JsonNode m:ms){String n=m.path("nome").asText("");String d=m.path("dataHora").asText("");if(!n.isBlank()){if(baixa(n))baixa=true;if(ud==null||d.compareTo(ud)>0){ud=d;ultima=d+" — "+n;}}}return new DataJudAmostra(s.path("numeroProcesso").asText(null),s.path("classe").path("codigo").asText(null),s.path("classe").path("nome").asText(null),assuntos,s.path("grau").asText(null),s.path("orgaoJulgador").path("nome").asText(null),s.path("dataAjuizamento").asText(null),ultima,baixa);}
     private boolean baixa(String n){String x=n.toLowerCase(java.util.Locale.ROOT);return x.contains("baixa")||x.contains("baixado")||x.contains("arquivamento")||x.contains("arquivado")||x.contains("extinção")||x.contains("extincao")||x.contains("trânsito em julgado")||x.contains("transito em julgado");}
-    private String normalizarTribunal(String tribunal){if(tribunal==null)return null;String v=tribunal.trim().toLowerCase(java.util.Locale.ROOT);if(v.startsWith("api_publica_"))v=v.substring(12);return v.matches("[a-z0-9-]{2,15}")?v:null;}
+    private String normalizarTribunal(String t){if(t==null)return null;String v=t.trim().toLowerCase(java.util.Locale.ROOT);if(v.startsWith("api_publica_"))v=v.substring(12);return v.matches("[a-z0-9-]{2,15}")?v:null;}
+    private static final class DataJudMultipartFile implements MultipartFile{private final byte[] bytes;private final String name;DataJudMultipartFile(byte[] b,String n){bytes=b;name=n;}public String getName(){return "arquivo";}public String getOriginalFilename(){return name;}public String getContentType(){return "application/pdf";}public boolean isEmpty(){return bytes.length==0;}public long getSize(){return bytes.length;}public byte[] getBytes(){return bytes;}public InputStream getInputStream(){return new java.io.ByteArrayInputStream(bytes);}public void transferTo(File f)throws IOException{java.nio.file.Files.write(f.toPath(),bytes);}}
 }
