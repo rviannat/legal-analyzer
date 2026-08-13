@@ -47,6 +47,11 @@ public class AnthropicAiClient implements AiClient {
 
     @Override
     public String complete(String systemPrompt, String userPrompt) {
+        return complete(systemPrompt, userPrompt, 0);
+    }
+
+    @Override
+    public String complete(String systemPrompt, String userPrompt, int maxTokensSolicitado) {
         if (!StringUtils.hasText(properties.ai().apiKey())) {
             throw new AiClientException(
                     "Chave de API de IA não configurada. Defina a variável de ambiente ANTHROPIC_API_KEY.");
@@ -55,7 +60,7 @@ public class AnthropicAiClient implements AiClient {
         try {
             Map<String, Object> corpo = new LinkedHashMap<>();
             corpo.put("model", properties.ai().model());
-            corpo.put("max_tokens", properties.ai().maxTokens());
+            corpo.put("max_tokens", maxTokensSolicitado > 0 ? maxTokensSolicitado : properties.ai().maxTokens());
             corpo.put("temperature", properties.ai().temperature());
             corpo.put("system", systemPrompt);
             corpo.put("messages", List.of(Map.of("role", "user", "content", userPrompt)));

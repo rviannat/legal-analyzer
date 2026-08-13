@@ -8,7 +8,6 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Value;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -26,7 +25,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class OllamaAiClientTest {
 
     private HttpServer server;
-    @Value("${ollama.base-url}")
+    // Este é um teste JUnit puro (sem contexto Spring): @Value aqui nunca seria
+    // resolvido. A URL vem da porta efêmera do servidor criado no @BeforeEach.
     private String baseUrl;
     private final AtomicReference<String> ultimoCorpoRecebido = new AtomicReference<>();
     private volatile String respostaSimulada;
@@ -67,7 +67,7 @@ class OllamaAiClientTest {
         assertEquals("{\"ok\":true}", texto);
 
         JsonNode enviado = new ObjectMapper().readTree(ultimoCorpoRecebido.get());
-        assertEquals("llama3.2:3b", enviado.get("model").asText());
+        assertEquals("llama3.1:8b", enviado.get("model").asText());
         assertEquals(false, enviado.get("stream").asBoolean());
         assertEquals("json", enviado.get("format").asText());
         assertEquals("system", enviado.get("messages").get(0).get("role").asText());
