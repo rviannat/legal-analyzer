@@ -40,7 +40,7 @@ public class OllamaAiClient implements AiClient {
         try {
             Map<String, Object> opcoes = new LinkedHashMap<>();
             opcoes.put("temperature", ai.temperature());
-            opcoes.put("num_predict", Math.min(ai.maxTokens(), 768));
+            opcoes.put("num_predict", Math.min(ai.maxTokens(), 256));
             if (ai.contextWindow() > 0) opcoes.put("num_ctx", Math.min(ai.contextWindow(), 2048));
 
             Map<String, Object> corpo = new LinkedHashMap<>();
@@ -53,9 +53,13 @@ public class OllamaAiClient implements AiClient {
             corpo.put("options", opcoes);
             if (StringUtils.hasText(ai.keepAlive())) corpo.put("keep_alive", ai.keepAlive());
 
+            // CPU local pode precisar de mais de 90s para prompt + geração.
+            // O timeout continua limitado para evitar jobs infinitos, mas permite
+            // que uma chamada jurídica grande conclua em máquinas mais lentas.
+            int timeoutSeconds = Math.max(30, Math.min(ai.timeoutSeconds(), 180));
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(ai.baseUrl()))
-                    .timeout(Duration.ofSeconds(Math.max(30, Math.min(ai.timeoutSeconds(), 90))))
+                    .timeout(Duration.ofSeconds(timeoutSeconds))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(corpo), StandardCharsets.UTF_8));
             if (StringUtils.hasText(ai.apiKey())) builder.header("Authorization", "Bearer " + ai.apiKey());
