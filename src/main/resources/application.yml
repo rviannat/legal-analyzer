@@ -10,15 +10,10 @@ spring:
       max-file-size: ${MAX_FILE_SIZE:25MB}
       max-request-size: ${MAX_REQUEST_SIZE:25MB}
 
-# Configurações específicas da aplicação (ver AppProperties.java)
 legal-analyzer:
   ai:
     model: ${OLLAMA_MODEL:llama3.2:3b}
     max-tokens: ${OLLAMA_MAX_TOKENS:900}
-    # Orçamento de saída só da consolidação: a resposta é o JSON unificado de
-    # vários blocos parciais, muito maior que a de um agente comum. Com os 900
-    # tokens do padrão a resposta era cortada no meio e o parse do JSON
-    # falhava, derrubando a análise sempre na etapa de consolidação (55%).
     max-tokens-consolidacao: ${OLLAMA_MAX_TOKENS_CONSOLIDACAO:3072}
     context-window: ${OLLAMA_CONTEXT_WINDOW:8192}
     base-url: ${OLLAMA_BASE_URL:http://localhost:11434/api/chat}
@@ -28,24 +23,11 @@ legal-analyzer:
     timeout-seconds: ${OLLAMA_TIMEOUT_SECONDS:1200}
     json-mode: ${OLLAMA_JSON_MODE:true}
     keep-alive: ${OLLAMA_KEEP_ALIVE:30m}
-    # Tamanho máximo (chars) do JSON somado enviado por chamada de
-    # consolidação. Documentos com muitos chunks são consolidados em
-    # lotes (map-reduce) para não estourar o num_ctx configurado acima.
-    # Precisa ser maior que o JSON de um único bloco parcial; se um bloco não
-    # couber no lote, o agrupamento por tamanho não reduz nada e o agente cai
-    # no agrupamento em pares (mais chamadas de IA, consolidação mais lenta).
     consolidacao-max-chars-lote: ${OLLAMA_CONSOLIDACAO_MAX_CHARS_LOTE:12000}
-
   pdf:
-    # Limite da validação da aplicação. Deve existir também em AppProperties;
-    # sem esta propriedade o record recebe 0 e todo PDF é rejeitado.
     max-file-size-bytes: ${MAX_FILE_SIZE_BYTES:26214400}
-    # Chunks maiores = menos trechos = menos chamadas de IA na extração e uma
-    # árvore de consolidação muito mais rasa. 4000 gerava ~58 trechos para um
-    # PDF de 200 mil caracteres, ou seja ~57 chamadas extras depois dos 55%.
     chunk-char-size: ${PDF_CHUNK_CHAR_SIZE:8000}
     chunk-overlap-chars: ${PDF_CHUNK_OVERLAP_CHARS:500}
-
   especializada:
     amostra-texto-chars: ${ESPECIALIZADA_AMOSTRA_CHARS:16000}
     max-rascunhos: ${ESPECIALIZADA_MAX_RASCUNHOS:5}
@@ -63,7 +45,7 @@ legal-analyzer:
       - camara.leg.br
       - in.gov.br
     fontes:
-      - nome: "LexML - legislacao e jurisprudencia (Rede de Informacao Legislativa e Juridica)"
+      - nome: "LexML - legislacao e jurisprudencia"
         url-template: "https://www.lexml.gov.br/busca/search?keyword={consulta}"
       - nome: "STF - pesquisa de jurisprudencia"
         url-template: "https://jurisprudencia.stf.jus.br/pages/search?base=acordaos&query={consulta}"
@@ -72,7 +54,6 @@ legal-analyzer:
     max-chars-por-fonte: ${LEGAL_RESEARCH_MAX_CHARS:8000}
     max-fontes-por-consulta: ${LEGAL_RESEARCH_MAX_FONTES:3}
     timeout-seconds: ${LEGAL_RESEARCH_TIMEOUT_SECONDS:20}
-
   rag:
     embeddings-habilitados: ${RAG_EMBEDDINGS_ENABLED:false}
     embedding-model: ${RAG_EMBEDDING_MODEL:nomic-embed-text}
@@ -84,6 +65,11 @@ legal-analyzer:
     max-passagens-por-resposta: ${RAG_MAX_PASSAGENS_RESPOSTA:8}
     score-minimo: ${RAG_SCORE_MINIMO:0.05}
     max-mensagens-historico: ${RAG_MAX_HISTORICO:6}
+  data-jud:
+    enabled: ${LEGAL_ANALYZER_DATAJUD_ENABLED:false}
+    base-url: ${LEGAL_ANALYZER_DATAJUD_BASE_URL:https://api-publica.datajud.cnj.jus.br}
+    api-key: ${LEGAL_ANALYZER_DATAJUD_API_KEY:}
+    timeout-seconds: ${LEGAL_ANALYZER_DATAJUD_TIMEOUT_SECONDS:60}
 
 logging:
   level:
