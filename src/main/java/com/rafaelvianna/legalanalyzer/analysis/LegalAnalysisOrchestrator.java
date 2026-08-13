@@ -7,8 +7,8 @@ import com.rafaelvianna.legalanalyzer.analysis.agents.InconsistenciaAgent;
 import com.rafaelvianna.legalanalyzer.analysis.agents.PerguntasAgent;
 import com.rafaelvianna.legalanalyzer.analysis.agents.RelatorioExecutivoAgent;
 import com.rafaelvianna.legalanalyzer.analysis.agents.ResumoAgent;
-import com.rafaelvianna.legalanalyzer.config.AppProperties;
 import com.rafaelvianna.legalanalyzer.async.AnaliseStatus;
+import com.rafaelvianna.legalanalyzer.config.AppProperties;
 import com.rafaelvianna.legalanalyzer.pdf.PdfTextChunker;
 import com.rafaelvianna.legalanalyzer.web.dto.AnaliseProcessoResponse;
 import com.rafaelvianna.legalanalyzer.web.dto.ExtractionResult;
@@ -19,38 +19,21 @@ import com.rafaelvianna.legalanalyzer.web.dto.RelatorioExecutivoDTO;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Orquestra a pipeline completa de agentes de IA sobre o texto extraído
- * de um PDF de processo jurídico, cobrindo as 12 capacidades solicitadas:
+ * Orquestra a pipeline completa de agentes de IA sobre o texto extraído de um PDF.
  *
- * <ol>
- *   <li>leitura dos documentos (feita antes, na extração de texto do PDF)</li>
- *   <li>identificação das partes</li>
- *   <li>identificação da cronologia</li>
- *   <li>identificação dos pedidos</li>
- *   <li>identificação das decisões</li>
- *   <li>identificação de prazos/datas relevantes</li>
- *   <li>identificação de documentos importantes</li>
- *   <li>resumo do processo</li>
- *   <li>apontamento de inconsistências</li>
- *   <li>organização de evidências</li>
- *   <li>geração de perguntas de investigação para o advogado</li>
- *   <li>produção de um relatório executivo</li>
- * </ol>
- *
- * Estratégia para documentos longos: o texto é dividido em trechos
- * (chunks); cada trecho passa pelo {@link ExtractionAgent} (tarefas 2-7);
- * os resultados parciais são então unificados pelo {@link ConsolidationAgent}
- * quando há mais de um trecho. As demais tarefas (8-12) operam sobre os
- * dados já consolidados, mantendo o consumo de tokens sob controle.
+ * A extração é feita em chunks pequenos e o resultado é consolidado de forma
+ * hierárquica. Isso evita enviar um processo grande para o llama3.2:3b de uma só
+ * vez e permite atualizar o progresso entre chamadas ao Ollama.
  */
 @Service
 public class LegalAnalysisOrchestrator {
 
-    /** Tamanho máximo (em caracteres) da amostra de texto original enviada para tarefas que precisam de contexto textual (resumo/inconsistências). */
-    private static final int TAMANHO_AMOSTRA_TEXTO = 12_000;
+    private static final int TAMANHO_AMOSTRA_TEXTO = 6_000;
+    private static final int TAMANHO_LOTE_CONSOLIDACAO = 3;
 
     private final PdfTextChunker chunker;
     private final ExtractionAgent extractionAgent;
@@ -86,48 +69,66 @@ public class LegalAnalysisOrchestrator {
         return analisar(nomeArquivo, textoCompleto, AnalysisProgressListener.noop());
     }
 
-    public AnaliseProcessoResponse analisar(String nomeArquivo, String textoCompleto, AnalysisProgressListener progress) {
-        progress.update(AnaliseStatus.EXTRAINDO_PDF, 18, "PDF extraído", "Texto extraído com sucesso. Preparando os trechos para a análise.");
+    public AnaliseProcessoResponse analisar(String nomeArquivo,
+                                             String textoCompleto,
+                                             AnalysisProgressListener progress) {
+        progress.update(AnaliseStatus.EXTRAINDO_PDF, 18, "PDF extraído",
+                "Texto extraído com sucesso. Preparando os trechos para a análise.");
 
-        // Passo 1: dividir o texto em trechos processáveis pelos agentes.
         List<String> trechos = chunker.chunk(
                 textoCompleto,
                 properties.pdf().chunkCharSize(),
                 properties.pdf().chunkOverlapChars());
 
-        progress.update(AnaliseStatus.ANALISANDO_PARTES, 35, "Analisando partes e fatos", "Identificando partes, cronologia, pedidos, decisões, prazos e documentos.");
+        if (trechos.isEmpty()) {
+            throw new IllegalArgumentException("O PDF não contém texto suficiente para análise.");
+        }
 
-        // Passos 2-7: extrair partes/cronologia/pedidos/decisões/prazos/documentos de cada trecho.
-        List<ExtractionResult> resultadosParciais = trechos.stream()
-                .map(extractionAgent::extrair)
-                .toList();
+        progress.update(AnaliseStatus.ANALISANDO_PARTES, 35,
+                "Analisando partes e fatos",
+                "Analisando trecho 1 de " + trechos.size() + ".");
 
-        progress.update(AnaliseStatus.CONSOLIDANDO, 55, "Consolidando resultados", "Unificando os resultados dos trechos em uma visão única do processo.");
+        List<ExtractionResult> resultadosParciais = new ArrayList<>();
+        for (int i = 0; i < trechos.size(); i++) {
+            int progresso = progressoExtracao(i + 1, trechos.size());
+            progress.update(AnaliseStatus.ANALISANDO_PARTES, progresso,
+                    "Analisando partes e fatos",
+                    "Analisando trecho " + (i + 1) + " de " + trechos.size() + ".");
 
-        // Consolidação: unifica os trechos em um único conjunto de dados coerente.
-        ExtractionResult dadosConsolidados = resultadosParciais.size() <= 1
-                ? resultadosParciais.get(0)
-                : consolidationAgent.consolidar(resultadosParciais);
+            resultadosParciais.add(extractionAgent.extrair(trechos.get(i)));
+        }
+
+        progress.update(AnaliseStatus.CONSOLIDANDO, 55,
+                "Consolidando resultados",
+                "Unificando os resultados dos trechos em lotes pequenos para reduzir o consumo de memória.");
+
+        ExtractionResult dadosConsolidados = consolidarHierarquicamente(resultadosParciais, progress);
 
         String amostraTexto = amostrar(textoCompleto, TAMANHO_AMOSTRA_TEXTO);
 
-        // Passo 8: resumo do processo.
+        progress.update(AnaliseStatus.CONSOLIDANDO, 62,
+                "Gerando resumo",
+                "Produzindo uma visão executiva do processo.");
         String resumo = resumoAgent.resumir(dadosConsolidados, amostraTexto);
 
-        // Passo 9: inconsistências.
+        progress.update(AnaliseStatus.CONSOLIDANDO, 67,
+                "Verificando inconsistências",
+                "Identificando divergências, lacunas e pontos de atenção.");
         List<InconsistenciaDTO> inconsistencias = inconsistenciaAgent.identificar(dadosConsolidados, amostraTexto);
 
-        progress.update(AnaliseStatus.ANALISANDO_EVIDENCIAS, 72, "Analisando evidências", "Organizando evidências, inconsistências e perguntas de investigação.");
-
-        // Passo 10: organização de evidências.
+        progress.update(AnaliseStatus.ANALISANDO_EVIDENCIAS, 72,
+                "Analisando evidências",
+                "Organizando evidências e perguntas de investigação.");
         List<GrupoEvidenciaDTO> gruposEvidencia = evidenciaAgent.organizar(dadosConsolidados);
 
-        // Passo 11: perguntas de investigação para o advogado.
+        progress.update(AnaliseStatus.ANALISANDO_EVIDENCIAS, 80,
+                "Gerando perguntas de investigação",
+                "Preparando perguntas para revisão do advogado.");
         List<String> perguntas = perguntasAgent.gerar(dadosConsolidados, inconsistencias, resumo);
 
-        progress.update(AnaliseStatus.GERANDO_RELATORIO, 90, "Gerando relatório executivo", "Consolidando conclusões, recomendações e próximos passos.");
-
-        // Passo 12: relatório executivo final, sintetizando tudo.
+        progress.update(AnaliseStatus.GERANDO_RELATORIO, 90,
+                "Gerando relatório executivo",
+                "Consolidando conclusões, recomendações e próximos passos.");
         RelatorioExecutivoDTO relatorioExecutivo = relatorioExecutivoAgent.gerar(
                 nomeArquivo, resumo, dadosConsolidados, inconsistencias, perguntas);
 
@@ -153,10 +154,51 @@ public class LegalAnalysisOrchestrator {
                 relatorioExecutivo);
     }
 
+    /**
+     * Consolida em lotes de no máximo três resultados e repete até restar um.
+     * Assim, a consolidação nunca recebe uma lista potencialmente enorme.
+     */
+    private ExtractionResult consolidarHierarquicamente(List<ExtractionResult> resultados,
+                                                         AnalysisProgressListener progress) {
+        if (resultados.size() == 1) {
+            return resultados.get(0);
+        }
+
+        List<ExtractionResult> nivelAtual = resultados;
+        int nivel = 1;
+        while (nivelAtual.size() > 1) {
+            List<ExtractionResult> proximoNivel = new ArrayList<>();
+            int totalLotes = (nivelAtual.size() + TAMANHO_LOTE_CONSOLIDACAO - 1)
+                    / TAMANHO_LOTE_CONSOLIDACAO;
+
+            for (int inicio = 0, lote = 1; inicio < nivelAtual.size(); inicio += TAMANHO_LOTE_CONSOLIDACAO, lote++) {
+                int fim = Math.min(inicio + TAMANHO_LOTE_CONSOLIDACAO, nivelAtual.size());
+                progress.update(AnaliseStatus.CONSOLIDANDO, 55,
+                        "Consolidando resultados",
+                        "Consolidando lote " + lote + " de " + totalLotes + " (nível " + nivel + ").");
+                proximoNivel.add(consolidationAgent.consolidar(nivelAtual.subList(inicio, fim)));
+            }
+
+            nivelAtual = proximoNivel;
+            nivel++;
+        }
+
+        return nivelAtual.get(0);
+    }
+
+    private int progressoExtracao(int atual, int total) {
+        if (total <= 1) {
+            return 45;
+        }
+        // Reserva 35-52% para a extração dos chunks e deixa consolidação começar em 55%.
+        return 35 + (int) Math.round(17.0 * atual / total);
+    }
+
     private String amostrar(String texto, int tamanhoMaximo) {
         if (texto.length() <= tamanhoMaximo) {
             return texto;
         }
-        return texto.substring(0, tamanhoMaximo) + "\n[...conteúdo truncado para controle de tamanho...]";
+        return texto.substring(0, tamanhoMaximo)
+                + "\n[...conteúdo truncado para controle de tamanho...]";
     }
 }
