@@ -55,7 +55,7 @@ legal-analyzer:
     max-fontes-por-consulta: ${LEGAL_RESEARCH_MAX_FONTES:3}
     timeout-seconds: ${LEGAL_RESEARCH_TIMEOUT_SECONDS:20}
   rag:
-    embeddings-habilitados: ${RAG_EMBEDDINGS_ENABLED:false}
+    embeddings-habilitados: ${RAG_EMBEDDINGS_ENABLED:true}
     embedding-model: ${RAG_EMBEDDING_MODEL:nomic-embed-text}
     embedding-base-url: ${RAG_EMBEDDING_BASE_URL:http://localhost:11434/api/embeddings}
     embedding-timeout-seconds: ${RAG_EMBEDDING_TIMEOUT_SECONDS:60}
