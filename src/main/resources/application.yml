@@ -13,21 +13,13 @@ spring:
 # Configurações específicas da aplicação (ver AppProperties.java)
 legal-analyzer:
   ai:
-    provider: ${AI_PROVIDER:ollama}
-    api-key: ${OLLAMA_API_KEY:}
     model: ${OLLAMA_MODEL:llama3.2:3b}
-    base-url: ${OLLAMA_BASE_URL:http://localhost:11434/api/chat}
     max-tokens: ${OLLAMA_MAX_TOKENS:1024}
-    temperature: ${OLLAMA_TEMPERATURE:0.1}
-    timeout-seconds: ${OLLAMA_TIMEOUT_SECONDS:300}
     context-window: ${OLLAMA_CONTEXT_WINDOW:2048}
-    json-mode: ${OLLAMA_JSON_MODE:true}
-    keep-alive: ${OLLAMA_KEEP_ALIVE:30m}
 
   pdf:
-    max-file-size-bytes: 26214400
     chunk-char-size: 6000
-    chunk-overlap-chars: 500          # sobreposição entre trechos para não perder contexto
+    chunk-overlap-chars: 500  # sobreposição entre trechos para não perder contexto
 
   especializada:
     # amostra do texto original enviada aos agentes especializados
