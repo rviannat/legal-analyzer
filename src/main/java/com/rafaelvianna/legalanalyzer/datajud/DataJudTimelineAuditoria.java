@@ -12,6 +12,7 @@ public record DataJudTimelineAuditoria(
         List<DataJudMovimento> movimentacoesOficiaisDetalhadas,
         List<DataJudTimelineEvento> linhaDoTempoHibrida,
         List<DataJudTimelineEvento> alertasMovimentacoesOcultas,
+        List<DataJudTimelineEvento> alertasPrazos,
         String dataPublicacaoOficial,
         String dataTransitoEmJulgadoOficial,
         String observacao
@@ -19,7 +20,7 @@ public record DataJudTimelineAuditoria(
     public static DataJudTimelineAuditoria indisponivel(DataJudInfo info) {
         return new DataJudTimelineAuditoria(
                 info == null ? DataJudStatus.INDISPONIVEL : info.status(), 0, 0, 0, 0,
-                List.of(), List.of(), List.of(), null, null,
+                List.of(), List.of(), List.of(), List.of(), null, null,
                 "A sincronização não foi executada porque não há movimentações públicas do DataJud disponíveis.");
     }
 }
