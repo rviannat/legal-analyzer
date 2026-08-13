@@ -1,81 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
-
-    <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.4</version>
-        <relativePath/>
-    </parent>
-
-    <groupId>com.rafaelvianna</groupId>
-    <artifactId>legal-analyzer</artifactId>
-    <version>1.0.0</version>
-    <name>legal-analyzer</name>
-    <description>Backend Spring Boot para análise automatizada de processos e documentos jurídicos com agentes de IA</description>
-
-    <properties>
-        <java.version>17</java.version>
-        <pdfbox.version>2.0.30</pdfbox.version>
-    </properties>
-
-    <dependencies>
-        <!-- Web / REST -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
-
-        <!-- Extração de texto de PDF -->
-        <dependency>
-            <groupId>org.apache.pdfbox</groupId>
-            <artifactId>pdfbox</artifactId>
-            <version>${pdfbox.version}</version>
-        </dependency>
-
-        <!-- Testes -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-                <!--
-                    Em máquinas com pouca RAM total (ex.: ~7 GB), o G1 GC padrão
-                    pode falhar ao reservar memória nativa logo na inicialização
-                    da JVM (ver hs_err_pid*.log). Limitamos a heap e trocamos
-                    para o Serial GC, que exige bem menos memória nativa.
-                    Ajuste -Xmx para cima se sua máquina tiver mais RAM livre.
-                -->
-                <configuration>
-                    <jvmArguments>-Xms128m -Xmx512m -Xss256k -XX:+UseSerialGC</jvmArguments>
-                </configuration>
-            </plugin>
-            <!--
-                A suíte contém testes SpringBootTest. Em máquinas de desenvolvimento
-                com ~8 GB de RAM, o fork padrão do Surefire pode reservar até ~2 GB
-                por JVM de teste e causar OOM nativo ao executar a suíte repetidamente.
-                Mantemos a execução determinística e econômica em CI/desenvolvimento.
-            -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <configuration>
-                    <argLine>-Xms128m -Xmx768m -XX:+UseSerialGC</argLine>
-                    <forkCount>1</forkCount>
-                    <reuseForks>true</reuseForks>
-                </configuration>
-            </plugin>
-        </plugins>
-    </build>
-
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+ <modelVersion>4.0.0</modelVersion>
+ <parent><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-parent</artifactId><version>3.3.4</version><relativePath/></parent>
+ <groupId>com.rafaelvianna</groupId><artifactId>legal-analyzer</artifactId><version>1.0.0</version><name>legal-analyzer</name><description>Backend Spring Boot para análise automatizada de processos e documentos jurídicos com agentes de IA</description>
+ <properties><java.version>17</java.version><pdfbox.version>2.0.30</pdfbox.version></properties>
+ <dependencies>
+  <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
+  <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-jpa</artifactId></dependency>
+  <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><scope>runtime</scope></dependency>
+  <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
+  <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-database-postgresql</artifactId></dependency>
+  <dependency><groupId>org.apache.pdfbox</groupId><artifactId>pdfbox</artifactId><version>${pdfbox.version}</version></dependency>
+  <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
+ </dependencies>
+ <build><plugins>
+  <plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId><configuration><jvmArguments>-Xms128m -Xmx512m -Xss256k -XX:+UseSerialGC</jvmArguments></configuration></plugin>
+  <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><configuration><argLine>-Xms128m -Xmx768m -XX:+UseSerialGC</argLine><forkCount>1</forkCount><reuseForks>true</reuseForks></configuration></plugin>
+ </plugins></build>
 </project>
