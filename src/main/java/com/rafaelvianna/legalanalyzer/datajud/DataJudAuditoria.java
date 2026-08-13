@@ -30,7 +30,9 @@ public record DataJudAuditoria(
     public static DataJudTimelineAuditoria sincronizarTimeline(DataJudInfo info, String textoPdf, List<EventoCronologiaDTO> eventosPdf) {
         if (info == null || !info.encontrado() || info.movimentos().isEmpty()) return DataJudTimelineAuditoria.indisponivel(info);
         String texto = normalizar(textoPdf); List<EventoCronologiaDTO> pdf = eventosPdf == null ? List.of() : eventosPdf;
-        List<DataJudTimelineEvento> hibrida = new ArrayList<>(); List<DataJudTimelineEvento> ocultas = new ArrayList<>();
+        List<DataJudTimelineEvento> hibrida = new ArrayList<>();
+        List<DataJudTimelineEvento> ocultas = new ArrayList<>();
+        List<DataJudTimelineEvento> alertasPrazos = new ArrayList<>();
         int correspondencias = 0; String publicacao = null; String transito = null;
         for (DataJudMovimento m : info.movimentos()) {
             String data = data(m.dataHora()); boolean match = matchTexto(m, texto) || matchCronologia(m, pdf);
@@ -40,15 +42,32 @@ public record DataJudAuditoria(
             String fase = fase(m.nome());
             DataJudTimelineEvento e = new DataJudTimelineEvento(data, desc, fase, "DATAJUD", match ? "CORRESPONDENTE_NO_PDF" : "NAO_ENCONTRADA_NO_PDF", true);
             hibrida.add(e); if (!match) ocultas.add(e);
+            if (geraAlertaPrazo(m)) alertasPrazos.add(e);
             if ("PUBLICAÇÃO".equals(fase)) publicacao = maisRecente(publicacao, data);
             if ("TRÂNSITO EM JULGADO".equals(fase)) transito = maisRecente(transito, data);
         }
         for (EventoCronologiaDTO e : pdf) if (e != null) hibrida.add(new DataJudTimelineEvento(e.data(), e.descricaoEvento(), e.fase(), "PDF", "EXTRAIDO_DO_PDF", false));
         Comparator<DataJudTimelineEvento> ordem = Comparator.comparing(e -> parse(e.data()), Comparator.nullsLast(Comparator.naturalOrder()));
-        hibrida.sort(ordem); ocultas.sort(ordem);
+        hibrida.sort(ordem); ocultas.sort(ordem); alertasPrazos.sort(ordem);
         String obs = ocultas.isEmpty() ? "Todas as movimentações públicas encontraram correspondência no PDF ou na cronologia extraída." :
                 "Há movimentações oficiais sem correspondente claro no PDF. O alerta indica uma lacuna de correspondência, não prova isoladamente que o documento esteja incompleto.";
-        return new DataJudTimelineAuditoria(info.status(), info.movimentos().size(), pdf.size(), correspondencias, ocultas.size(), info.movimentos(), List.copyOf(hibrida), List.copyOf(ocultas), publicacao, transito, obs);
+        if (!alertasPrazos.isEmpty()) obs += " Foram identificadas " + alertasPrazos.size() + " movimentação(ões) potencialmente geradora(s) de prazo; o sistema não infere automaticamente a quantidade de dias.";
+        return new DataJudTimelineAuditoria(info.status(), info.movimentos().size(), pdf.size(), correspondencias, ocultas.size(), info.movimentos(), List.copyOf(hibrida), List.copyOf(ocultas), List.copyOf(alertasPrazos), publicacao, transito, obs);
+    }
+
+    private static boolean geraAlertaPrazo(DataJudMovimento m) {
+        String s = normalizar((m.nome() == null ? "" : m.nome()) + " " + (m.complemento() == null ? "" : m.complemento()));
+        if (s.isBlank()) return false;
+        return containsAny(s,
+                "intimacao", "intimado", "intime-se", "citacao", "citado", "cite-se",
+                "ato ordinatorio", "ato ordinatório", "prazo", "manifestacao", "manifestar-se",
+                "ciencia", "ciente", "comunicacao", "notificacao", "notificado",
+                "conclusao", "conclusos", "despacho", "determinada a intimacao");
+    }
+
+    private static boolean containsAny(String text, String... terms) {
+        for (String term : terms) if (text.contains(normalizar(term))) return true;
+        return false;
     }
 
     private static boolean matchTexto(DataJudMovimento m, String texto) {
