@@ -6,6 +6,7 @@ import com.rafaelvianna.legalanalyzer.async.AnaliseJob;
 import com.rafaelvianna.legalanalyzer.async.AnaliseJobResponse;
 import com.rafaelvianna.legalanalyzer.async.AnaliseJobService;
 import com.rafaelvianna.legalanalyzer.config.AppProperties;
+import com.rafaelvianna.legalanalyzer.datajud.DataJudInfo;
 import com.rafaelvianna.legalanalyzer.exception.DocumentTooLargeException;
 import com.rafaelvianna.legalanalyzer.exception.PdfProcessingException;
 import com.rafaelvianna.legalanalyzer.web.dto.specialized.AnaliseEspecializadaRequest;
@@ -22,67 +23,42 @@ public class ProcessoAnaliseController {
     private final AnaliseEspecializadaJobService especializadaService;
     private final AppProperties properties;
 
-    public ProcessoAnaliseController(AnaliseJobService jobService,
-                                     AnaliseEspecializadaJobService especializadaService,
-                                     AppProperties properties) {
-        this.jobService = jobService;
-        this.especializadaService = especializadaService;
-        this.properties = properties;
+    public ProcessoAnaliseController(AnaliseJobService jobService, AnaliseEspecializadaJobService especializadaService, AppProperties properties) {
+        this.jobService = jobService; this.especializadaService = especializadaService; this.properties = properties;
     }
 
     @PostMapping(value = "/analisar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<AnaliseJobResponse> analisar(@RequestParam("arquivo") MultipartFile arquivo) {
-        validarArquivo(arquivo);
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(jobService.iniciar(arquivo));
+        validarArquivo(arquivo); return ResponseEntity.status(HttpStatus.ACCEPTED).body(jobService.iniciar(arquivo));
     }
 
-    /**
-     * Status da análise base. Quando concluída, a resposta traz em
-     * {@code analiseEspecializada} o endpoint e as opções da análise
-     * especializada (os 8 agentes especialistas).
-     */
     @GetMapping("/analises/{id}")
     public ResponseEntity<AnaliseJobResponse> consultar(@PathVariable String id) {
-        AnaliseJob job = jobService.buscar(id);
-        return ResponseEntity.ok(AnaliseJobResponse.status(job, especializadaService.opcao(job)));
+        AnaliseJob job = jobService.buscar(id); return ResponseEntity.ok(AnaliseJobResponse.status(job, especializadaService.opcao(job)));
     }
 
-    /**
-     * Habilita a análise especializada sobre uma análise base já concluída.
-     * O texto extraído e o resultado base são reaproveitados — não é preciso
-     * reenviar o PDF.
-     */
+    @GetMapping("/analises/{id}/datajud")
+    public ResponseEntity<DataJudInfo> consultarDataJud(@PathVariable String id) {
+        return ResponseEntity.ok(jobService.buscar(id).dataJud());
+    }
+
     @PostMapping(value = "/analises/{id}/especializada", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<AnaliseEspecializadaJobResponse> analisarEspecializada(
-            @PathVariable String id,
-            @RequestBody(required = false) AnaliseEspecializadaRequest request) {
+    public ResponseEntity<AnaliseEspecializadaJobResponse> analisarEspecializada(@PathVariable String id, @RequestBody(required = false) AnaliseEspecializadaRequest request) {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(especializadaService.iniciar(id, request));
     }
 
-    /** Status (e resultado, quando pronto) de uma análise especializada. */
     @GetMapping("/analises-especializadas/{id}")
-    public ResponseEntity<AnaliseEspecializadaJobResponse> consultarEspecializada(@PathVariable String id) {
-        return ResponseEntity.ok(especializadaService.consultar(id));
-    }
+    public ResponseEntity<AnaliseEspecializadaJobResponse> consultarEspecializada(@PathVariable String id) { return ResponseEntity.ok(especializadaService.consultar(id)); }
 
     @PostMapping(value = "/health")
-    public ResponseEntity<String> health() {
-        return ResponseEntity.ok("OK");
-    }
+    public ResponseEntity<String> health() { return ResponseEntity.ok("OK"); }
 
     private void validarArquivo(MultipartFile arquivo) {
-        if (arquivo == null || arquivo.isEmpty()) {
-            throw new PdfProcessingException("Nenhum arquivo foi enviado. Envie um PDF no campo \"arquivo\".");
-        }
+        if (arquivo == null || arquivo.isEmpty()) throw new PdfProcessingException("Nenhum arquivo foi enviado. Envie um PDF no campo \"arquivo\".");
         String contentType = arquivo.getContentType();
-        boolean pareceSerPdfPeloNome = arquivo.getOriginalFilename() != null
-                && arquivo.getOriginalFilename().toLowerCase().endsWith(".pdf");
-        if ((contentType == null || !contentType.equalsIgnoreCase(MediaType.APPLICATION_PDF_VALUE)) && !pareceSerPdfPeloNome) {
-            throw new PdfProcessingException("O arquivo enviado precisa ser um PDF (application/pdf).");
-        }
+        boolean pareceSerPdfPeloNome = arquivo.getOriginalFilename() != null && arquivo.getOriginalFilename().toLowerCase().endsWith(".pdf");
+        if ((contentType == null || !contentType.equalsIgnoreCase(MediaType.APPLICATION_PDF_VALUE)) && !pareceSerPdfPeloNome) throw new PdfProcessingException("O arquivo enviado precisa ser um PDF (application/pdf).");
         long tamanhoMaximo = properties.pdf().maxFileSizeBytes();
-        if (arquivo.getSize() > tamanhoMaximo) {
-            throw new DocumentTooLargeException("Arquivo excede o tamanho máximo permitido de " + (tamanhoMaximo / 1_000_000) + "MB.");
-        }
+        if (arquivo.getSize() > tamanhoMaximo) throw new DocumentTooLargeException("Arquivo excede o tamanho máximo permitido de " + (tamanhoMaximo / 1_000_000) + "MB.");
     }
 }
