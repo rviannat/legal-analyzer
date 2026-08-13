@@ -4,7 +4,9 @@ legal-analyzer:
     model: llama3.2:3b
     base-url: http://127.0.0.1:11434/api/chat
     temperature: 0.1
-    timeout-seconds: 300s
+    # int, não Duration: com o sufixo "s" o contexto do Spring nem sobe
+    # (NumberFormatException: For input string: "300s").
+    timeout-seconds: 300
   legal-research:
     enabled: false
     dominios-autorizados: []

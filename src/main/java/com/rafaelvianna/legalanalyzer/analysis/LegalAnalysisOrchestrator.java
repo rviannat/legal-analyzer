@@ -8,6 +8,7 @@ import com.rafaelvianna.legalanalyzer.analysis.agents.PerguntasAgent;
 import com.rafaelvianna.legalanalyzer.analysis.agents.RelatorioExecutivoAgent;
 import com.rafaelvianna.legalanalyzer.analysis.agents.ResumoAgent;
 import com.rafaelvianna.legalanalyzer.config.AppProperties;
+import com.rafaelvianna.legalanalyzer.exception.PdfProcessingException;
 import com.rafaelvianna.legalanalyzer.async.AnaliseStatus;
 import com.rafaelvianna.legalanalyzer.pdf.PdfTextChunker;
 import com.rafaelvianna.legalanalyzer.web.dto.AnaliseProcessoResponse;
@@ -114,17 +115,36 @@ public class LegalAnalysisOrchestrator {
 
         progress.update(AnaliseStatus.CONSOLIDANDO, 55, "Consolidando resultados", "Unificando os resultados dos trechos em uma visão única do processo.");
 
+        if (resultadosParciais.isEmpty()) {
+            // Defensivo: o serviço de extração já rejeita PDFs sem texto
+            // (escaneados sem OCR), mas sem este guard a lista vazia viraria
+            // um IndexOutOfBoundsException com mensagem nula — que o chamador
+            // traduz para o genérico "Erro inesperado durante a análise".
+            throw new PdfProcessingException(
+                    "Nenhum trecho analisável foi gerado a partir do texto do PDF. "
+                            + "O documento pode ser uma imagem digitalizada sem OCR.");
+        }
+
         // Consolidação: unifica os trechos em um único conjunto de dados coerente.
-        ExtractionResult dadosConsolidados = resultadosParciais.size() <= 1
+        // O progresso é reportado a cada fusão: são dezenas de chamadas de IA em
+        // documentos grandes, e sem isso a barra ficava congelada em 55%.
+        ExtractionResult dadosConsolidados = resultadosParciais.size() == 1
                 ? resultadosParciais.get(0)
-                : consolidationAgent.consolidar(resultadosParciais);
+                : consolidationAgent.consolidar(resultadosParciais,
+                        (fusoesConcluidas, fusoesTotais, detalhe) -> progress.update(
+                                AnaliseStatus.CONSOLIDANDO,
+                                progressoEntre(55, 66, fusoesConcluidas, fusoesTotais),
+                                "Consolidando resultados",
+                                detalhe));
 
         String amostraTexto = amostrar(textoCompleto, TAMANHO_AMOSTRA_TEXTO);
 
         // Passo 8: resumo do processo.
+        progress.update(AnaliseStatus.CONSOLIDANDO, 66, "Resumindo o processo", "Gerando o resumo executivo a partir dos dados consolidados.");
         String resumo = resumoAgent.resumir(dadosConsolidados, amostraTexto);
 
         // Passo 9: inconsistências.
+        progress.update(AnaliseStatus.CONSOLIDANDO, 69, "Verificando inconsistências", "Comparando datas, valores e alegações do processo.");
         List<InconsistenciaDTO> inconsistencias = inconsistenciaAgent.identificar(dadosConsolidados, amostraTexto);
 
         progress.update(AnaliseStatus.ANALISANDO_EVIDENCIAS, 72, "Analisando evidências", "Organizando evidências, inconsistências e perguntas de investigação.");
@@ -133,6 +153,7 @@ public class LegalAnalysisOrchestrator {
         List<GrupoEvidenciaDTO> gruposEvidencia = evidenciaAgent.organizar(dadosConsolidados);
 
         // Passo 11: perguntas de investigação para o advogado.
+        progress.update(AnaliseStatus.ANALISANDO_EVIDENCIAS, 81, "Gerando perguntas de investigação", "Formulando perguntas a partir das inconsistências e do resumo.");
         List<String> perguntas = perguntasAgent.gerar(dadosConsolidados, inconsistencias, resumo);
 
         progress.update(AnaliseStatus.GERANDO_RELATORIO, 90, "Gerando relatório executivo", "Consolidando conclusões, recomendações e próximos passos.");

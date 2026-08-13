@@ -135,6 +135,8 @@ public class AnaliseEspecializadaJobService {
 
             job.concluir(resultado);
         } catch (Exception e) {
+            log.error("Falha na análise especializada {} na etapa '{}' ({}%): {}",
+                    job.id(), job.etapa(), job.progresso(), e.getMessage(), e);
             job.falhar(e.getMessage() == null
                     ? "Erro inesperado durante a análise especializada." : e.getMessage());
         }

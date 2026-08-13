@@ -48,6 +48,11 @@ public class OllamaAiClient implements AiClient {
 
     @Override
     public String complete(String systemPrompt, String userPrompt) {
+        return complete(systemPrompt, userPrompt, 0);
+    }
+
+    @Override
+    public String complete(String systemPrompt, String userPrompt, int maxTokensSolicitado) {
         AppProperties.Ai ai = properties.ai();
 
         if (!StringUtils.hasText(ai.baseUrl())) {
@@ -63,7 +68,7 @@ public class OllamaAiClient implements AiClient {
             Map<String, Object> opcoes = new LinkedHashMap<>();
             opcoes.put("temperature", ai.temperature());
             // No Ollama, num_predict é o equivalente a max_tokens.
-            opcoes.put("num_predict", numPredictSeguro(systemPrompt, userPrompt, ai));
+            opcoes.put("num_predict", numPredictSeguro(systemPrompt, userPrompt, ai, maxTokensSolicitado));
             if (ai.contextWindow() > 0) {
                 // num_ctx precisa ser grande o suficiente para o chunk + prompt.
                 opcoes.put("num_ctx", ai.contextWindow());
@@ -128,8 +133,10 @@ public class OllamaAiClient implements AiClient {
      * modelo): ~4 caracteres por token é uma aproximação razoável para
      * português/inglês em prosa. Reservamos uma margem extra de segurança.
      */
-    private int numPredictSeguro(String systemPrompt, String userPrompt, AppProperties.Ai ai) {
-        int maxTokensConfigurado = ai.maxTokens() > 0 ? ai.maxTokens() : 1024;
+    private int numPredictSeguro(String systemPrompt, String userPrompt, AppProperties.Ai ai, int maxTokensSolicitado) {
+        int maxTokensConfigurado = maxTokensSolicitado > 0
+                ? maxTokensSolicitado
+                : (ai.maxTokens() > 0 ? ai.maxTokens() : 1024);
         if (ai.contextWindow() <= 0) {
             return maxTokensConfigurado;
         }

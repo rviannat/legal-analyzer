@@ -103,6 +103,11 @@ public class AnaliseJobService {
 
             job.concluir(resultado);
         } catch (Exception e) {
+            // Sem este log a causa da falha se perdia: o job ficava em ERRO com o
+            // progresso congelado no último valor publicado (tipicamente 55%) e
+            // nada no console indicava se foi timeout, JSON inválido ou OOM.
+            log.error("Falha na análise {} ({}) na etapa '{}' ({}%): {}",
+                    job.id(), job.nomeArquivo(), job.etapa(), job.progresso(), e.getMessage(), e);
             String mensagem = e.getMessage() == null ? "Erro inesperado durante a análise." : e.getMessage();
             job.falhar(mensagem);
         }
