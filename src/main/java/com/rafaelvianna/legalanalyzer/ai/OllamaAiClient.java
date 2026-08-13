@@ -63,7 +63,7 @@ public class OllamaAiClient implements AiClient {
             Map<String, Object> opcoes = new LinkedHashMap<>();
             opcoes.put("temperature", ai.temperature());
             // No Ollama, num_predict é o equivalente a max_tokens.
-            opcoes.put("num_predict", ai.maxTokens());
+            opcoes.put("num_predict", numPredictSeguro(systemPrompt, userPrompt, ai));
             if (ai.contextWindow() > 0) {
                 // num_ctx precisa ser grande o suficiente para o chunk + prompt.
                 opcoes.put("num_ctx", ai.contextWindow());
@@ -116,6 +116,44 @@ public class OllamaAiClient implements AiClient {
             Thread.currentThread().interrupt();
             throw new AiClientException("Chamada ao Ollama interrompida: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Calcula um num_predict seguro para que (tokens do prompt + resposta)
+     * nunca ultrapasse num_ctx. Sem isso, chunks maiores podem levar o
+     * servidor Ollama a cancelar a geração no meio (ver logs "cancel task" /
+     * HTTP 500) quando prompt + max_tokens excede a janela de contexto.
+     *
+     * A contagem de tokens é uma estimativa (não usamos o tokenizer real do
+     * modelo): ~4 caracteres por token é uma aproximação razoável para
+     * português/inglês em prosa. Reservamos uma margem extra de segurança.
+     */
+    private int numPredictSeguro(String systemPrompt, String userPrompt, AppProperties.Ai ai) {
+        int maxTokensConfigurado = ai.maxTokens() > 0 ? ai.maxTokens() : 1024;
+        if (ai.contextWindow() <= 0) {
+            return maxTokensConfigurado;
+        }
+
+        int caracteresPrompt = (systemPrompt == null ? 0 : systemPrompt.length())
+                + (userPrompt == null ? 0 : userPrompt.length());
+        int tokensPromptEstimados = (caracteresPrompt / 4) + 1;
+
+        int margemSeguranca = 64; // n_keep e afins
+        int tokensDisponiveis = ai.contextWindow() - tokensPromptEstimados - margemSeguranca;
+
+        // Nunca deixamos a resposta ridiculamente curta, mas avisamos via
+        // exceção clara se nem isso couber — melhor falhar cedo e explícito
+        // do que deixar o Ollama cancelar a task no meio.
+        int minimoAceitavel = 128;
+        if (tokensDisponiveis < minimoAceitavel) {
+            throw new AiClientException(String.format(
+                    "Prompt estimado em ~%d tokens não cabe na janela de contexto (num_ctx=%d) "
+                            + "com margem para resposta. Reduza o tamanho do chunk (PDF_CHUNK_CHAR_SIZE) "
+                            + "ou aumente OLLAMA_CONTEXT_WINDOW.",
+                    tokensPromptEstimados, ai.contextWindow()));
+        }
+
+        return Math.min(maxTokensConfigurado, tokensDisponiveis);
     }
 
     private String extrairTexto(String corpoResposta) throws IOException {

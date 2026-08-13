@@ -63,14 +63,14 @@ public class LegalAnalysisOrchestrator {
     private final AppProperties properties;
 
     public LegalAnalysisOrchestrator(PdfTextChunker chunker,
-                                      ExtractionAgent extractionAgent,
-                                      ConsolidationAgent consolidationAgent,
-                                      ResumoAgent resumoAgent,
-                                      InconsistenciaAgent inconsistenciaAgent,
-                                      EvidenciaAgent evidenciaAgent,
-                                      PerguntasAgent perguntasAgent,
-                                      RelatorioExecutivoAgent relatorioExecutivoAgent,
-                                      AppProperties properties) {
+                                     ExtractionAgent extractionAgent,
+                                     ConsolidationAgent consolidationAgent,
+                                     ResumoAgent resumoAgent,
+                                     InconsistenciaAgent inconsistenciaAgent,
+                                     EvidenciaAgent evidenciaAgent,
+                                     PerguntasAgent perguntasAgent,
+                                     RelatorioExecutivoAgent relatorioExecutivoAgent,
+                                     AppProperties properties) {
         this.chunker = chunker;
         this.extractionAgent = extractionAgent;
         this.consolidationAgent = consolidationAgent;
@@ -98,9 +98,19 @@ public class LegalAnalysisOrchestrator {
         progress.update(AnaliseStatus.ANALISANDO_PARTES, 35, "Analisando partes e fatos", "Identificando partes, cronologia, pedidos, decisões, prazos e documentos.");
 
         // Passos 2-7: extrair partes/cronologia/pedidos/decisões/prazos/documentos de cada trecho.
-        List<ExtractionResult> resultadosParciais = trechos.stream()
-                .map(extractionAgent::extrair)
-                .toList();
+        // Loop indexado (em vez de stream) para poder reportar progresso a cada
+        // trecho concluído — cada chamada de IA pode levar minutos em máquinas
+        // sem GPU, então sem isso o progresso fica "parado" em 35% por muito tempo.
+        List<ExtractionResult> resultadosParciais = new java.util.ArrayList<>(trechos.size());
+        for (int i = 0; i < trechos.size(); i++) {
+            resultadosParciais.add(extractionAgent.extrair(trechos.get(i)));
+
+            int concluidos = i + 1;
+            int progressoExtracao = progressoEntre(35, 55, concluidos, trechos.size());
+            progress.update(AnaliseStatus.ANALISANDO_PARTES, progressoExtracao,
+                    "Analisando partes e fatos",
+                    "Trecho " + concluidos + " de " + trechos.size() + " analisado.");
+        }
 
         progress.update(AnaliseStatus.CONSOLIDANDO, 55, "Consolidando resultados", "Unificando os resultados dos trechos em uma visão única do processo.");
 
@@ -151,6 +161,21 @@ public class LegalAnalysisOrchestrator {
                 gruposEvidencia,
                 perguntas,
                 relatorioExecutivo);
+    }
+
+    /**
+     * Interpola o progresso (%) entre {@code inicio} e {@code fim} conforme
+     * {@code concluidos} de {@code total} itens já foram processados.
+     * Usado para reportar avanço granular dentro de uma etapa longa (ex.:
+     * extração chunk a chunk), em vez de pular direto de {@code inicio} pra
+     * {@code fim} só quando todos os itens terminam.
+     */
+    private int progressoEntre(int inicio, int fim, int concluidos, int total) {
+        if (total <= 0) {
+            return fim;
+        }
+        double fracao = Math.min(1.0, (double) concluidos / total);
+        return inicio + (int) Math.round((fim - inicio) * fracao);
     }
 
     private String amostrar(String texto, int tamanhoMaximo) {
