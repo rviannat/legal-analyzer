@@ -13,25 +13,21 @@ spring:
 # Configurações específicas da aplicação (ver AppProperties.java)
 legal-analyzer:
   ai:
-    # Provedor de IA: "ollama" (padrão, modelo local) ou "anthropic"
     provider: ${AI_PROVIDER:ollama}
-    # No Ollama local não há chave de API; use apenas se houver proxy/gateway com bearer token
     api-key: ${OLLAMA_API_KEY:}
     model: ${OLLAMA_MODEL:llama3.2:3b}
     base-url: ${OLLAMA_BASE_URL:http://localhost:11434/api/chat}
-    max-tokens: ${OLLAMA_MAX_TOKENS:4096}
+    max-tokens: ${OLLAMA_MAX_TOKENS:1024}
     temperature: ${OLLAMA_TEMPERATURE:0.1}
     timeout-seconds: ${OLLAMA_TIMEOUT_SECONDS:300}
-    # num_ctx: precisa acomodar prompt + chunk (chunk-char-size / ~3.5 chars por token)
-    context-window: ${OLLAMA_CONTEXT_WINDOW:16384}
-    # format=json — obriga o modelo a devolver JSON válido (todos os agentes esperam JSON)
+    context-window: ${OLLAMA_CONTEXT_WINDOW:2048}
     json-mode: ${OLLAMA_JSON_MODE:true}
-    # mantém o modelo carregado em memória entre as chamadas da pipeline
     keep-alive: ${OLLAMA_KEEP_ALIVE:30m}
+
   pdf:
-    max-file-size-bytes: 26214400      # 25MB
-    chunk-char-size: 20000             # ~ tamanho de trecho enviado por chamada de IA
-    chunk-overlap-chars: 2000          # sobreposição entre trechos para não perder contexto
+    max-file-size-bytes: 26214400
+    chunk-char-size: 6000
+    chunk-overlap-chars: 500          # sobreposição entre trechos para não perder contexto
 
   especializada:
     # amostra do texto original enviada aos agentes especializados
