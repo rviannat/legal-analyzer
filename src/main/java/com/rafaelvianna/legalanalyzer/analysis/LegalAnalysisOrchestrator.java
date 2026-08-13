@@ -20,20 +20,22 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
- * Orquestra a pipeline completa de agentes de IA sobre o texto extraído de um PDF.
- *
- * A extração é feita em chunks pequenos e o resultado é consolidado de forma
- * hierárquica. Isso evita enviar um processo grande para o llama3.2:3b de uma só
- * vez e permite atualizar o progresso entre chamadas ao Ollama.
+ * Orquestra a análise jurídica sem transformar um PDF grande em milhares de
+ * chamadas ao LLM. Em máquinas locais/CPU, o custo da inferência é o gargalo;
+ * por isso a pipeline usa uma amostra determinística e representativa dos
+ * trechos, seguida de consolidação hierárquica.
  */
 @Service
 public class LegalAnalysisOrchestrator {
 
     private static final int TAMANHO_AMOSTRA_TEXTO = 6_000;
     private static final int TAMANHO_LOTE_CONSOLIDACAO = 3;
+    private static final int MAX_TRECHOS_IA = 16;
 
     private final PdfTextChunker chunker;
     private final ExtractionAgent extractionAgent;
@@ -73,20 +75,26 @@ public class LegalAnalysisOrchestrator {
                                              String textoCompleto,
                                              AnalysisProgressListener progress) {
         progress.update(AnaliseStatus.EXTRAINDO_PDF, 18, "PDF extraído",
-                "Texto extraído com sucesso. Preparando os trechos para a análise.");
+                "Texto extraído com sucesso. Preparando uma amostra representativa para a IA.");
 
-        List<String> trechos = chunker.chunk(
+        List<String> todosTrechos = chunker.chunk(
                 textoCompleto,
                 properties.pdf().chunkCharSize(),
                 properties.pdf().chunkOverlapChars());
 
-        if (trechos.isEmpty()) {
+        if (todosTrechos.isEmpty()) {
             throw new IllegalArgumentException("O PDF não contém texto suficiente para análise.");
         }
 
+        List<String> trechos = selecionarTrechosRepresentativos(todosTrechos, MAX_TRECHOS_IA);
+        String observacaoAmostragem = todosTrechos.size() > trechos.size()
+                ? " Documento grande: " + trechos.size() + " trechos representativos foram selecionados entre "
+                  + todosTrechos.size() + " trechos extraídos para manter a análise executável em CPU."
+                : "";
+
         progress.update(AnaliseStatus.ANALISANDO_PARTES, 35,
                 "Analisando partes e fatos",
-                "Analisando trecho 1 de " + trechos.size() + ".");
+                "Analisando trecho 1 de " + trechos.size() + "." + observacaoAmostragem);
 
         List<ExtractionResult> resultadosParciais = new ArrayList<>();
         for (int i = 0; i < trechos.size(); i++) {
@@ -94,50 +102,39 @@ public class LegalAnalysisOrchestrator {
             progress.update(AnaliseStatus.ANALISANDO_PARTES, progresso,
                     "Analisando partes e fatos",
                     "Analisando trecho " + (i + 1) + " de " + trechos.size() + ".");
-
             resultadosParciais.add(extractionAgent.extrair(trechos.get(i)));
         }
 
         progress.update(AnaliseStatus.CONSOLIDANDO, 55,
                 "Consolidando resultados",
-                "Unificando os resultados dos trechos em lotes pequenos para reduzir o consumo de memória.");
+                "Unificando os resultados dos trechos em lotes pequenos.");
 
         ExtractionResult dadosConsolidados = consolidarHierarquicamente(resultadosParciais, progress);
-
         String amostraTexto = amostrar(textoCompleto, TAMANHO_AMOSTRA_TEXTO);
 
         progress.update(AnaliseStatus.CONSOLIDANDO, 62,
-                "Gerando resumo",
-                "Produzindo uma visão executiva do processo.");
+                "Gerando resumo", "Produzindo uma visão executiva do processo.");
         String resumo = resumoAgent.resumir(dadosConsolidados, amostraTexto);
 
         progress.update(AnaliseStatus.CONSOLIDANDO, 67,
-                "Verificando inconsistências",
-                "Identificando divergências, lacunas e pontos de atenção.");
+                "Verificando inconsistências", "Identificando divergências, lacunas e pontos de atenção.");
         List<InconsistenciaDTO> inconsistencias = inconsistenciaAgent.identificar(dadosConsolidados, amostraTexto);
 
         progress.update(AnaliseStatus.ANALISANDO_EVIDENCIAS, 72,
-                "Analisando evidências",
-                "Organizando evidências e perguntas de investigação.");
+                "Analisando evidências", "Organizando evidências e perguntas de investigação.");
         List<GrupoEvidenciaDTO> gruposEvidencia = evidenciaAgent.organizar(dadosConsolidados);
 
         progress.update(AnaliseStatus.ANALISANDO_EVIDENCIAS, 80,
-                "Gerando perguntas de investigação",
-                "Preparando perguntas para revisão do advogado.");
+                "Gerando perguntas de investigação", "Preparando perguntas para revisão do advogado.");
         List<String> perguntas = perguntasAgent.gerar(dadosConsolidados, inconsistencias, resumo);
 
         progress.update(AnaliseStatus.GERANDO_RELATORIO, 90,
-                "Gerando relatório executivo",
-                "Consolidando conclusões, recomendações e próximos passos.");
+                "Gerando relatório executivo", "Consolidando conclusões, recomendações e próximos passos.");
         RelatorioExecutivoDTO relatorioExecutivo = relatorioExecutivoAgent.gerar(
                 nomeArquivo, resumo, dadosConsolidados, inconsistencias, perguntas);
 
         MetadataDTO metadata = new MetadataDTO(
-                nomeArquivo,
-                textoCompleto.length(),
-                trechos.size(),
-                properties.ai().model(),
-                Instant.now());
+                nomeArquivo, textoCompleto.length(), trechos.size(), properties.ai().model(), Instant.now());
 
         return new AnaliseProcessoResponse(
                 metadata,
@@ -155,14 +152,32 @@ public class LegalAnalysisOrchestrator {
     }
 
     /**
-     * Consolida em lotes de no máximo três resultados e repete até restar um.
-     * Assim, a consolidação nunca recebe uma lista potencialmente enorme.
+     * Seleciona deterministicamente trechos no início, no fim e ao longo do
+     * documento. Isso evita o comportamento anterior de fazer uma chamada ao
+     * Ollama para cada um dos milhares de chunks de um processo extenso.
      */
+    private List<String> selecionarTrechosRepresentativos(List<String> todos, int limite) {
+        if (todos.size() <= limite) return todos;
+        Set<Integer> indices = new LinkedHashSet<>();
+        indices.add(0);
+        indices.add(1);
+        indices.add(2);
+        indices.add(todos.size() - 3);
+        indices.add(todos.size() - 2);
+        indices.add(todos.size() - 1);
+
+        int restantes = limite - indices.size();
+        for (int i = 1; i <= restantes; i++) {
+            int indice = (int) Math.round((double) i * (todos.size() - 1) / (restantes + 1));
+            indices.add(indice);
+        }
+
+        return indices.stream().sorted().map(todos::get).toList();
+    }
+
     private ExtractionResult consolidarHierarquicamente(List<ExtractionResult> resultados,
                                                          AnalysisProgressListener progress) {
-        if (resultados.size() == 1) {
-            return resultados.get(0);
-        }
+        if (resultados.size() == 1) return resultados.get(0);
 
         List<ExtractionResult> nivelAtual = resultados;
         int nivel = 1;
@@ -178,26 +193,19 @@ public class LegalAnalysisOrchestrator {
                         "Consolidando lote " + lote + " de " + totalLotes + " (nível " + nivel + ").");
                 proximoNivel.add(consolidationAgent.consolidar(nivelAtual.subList(inicio, fim)));
             }
-
             nivelAtual = proximoNivel;
             nivel++;
         }
-
         return nivelAtual.get(0);
     }
 
     private int progressoExtracao(int atual, int total) {
-        if (total <= 1) {
-            return 45;
-        }
-        // Reserva 35-52% para a extração dos chunks e deixa consolidação começar em 55%.
+        if (total <= 1) return 50;
         return 35 + (int) Math.round(17.0 * atual / total);
     }
 
     private String amostrar(String texto, int tamanhoMaximo) {
-        if (texto.length() <= tamanhoMaximo) {
-            return texto;
-        }
+        if (texto.length() <= tamanhoMaximo) return texto;
         return texto.substring(0, tamanhoMaximo)
                 + "\n[...conteúdo truncado para controle de tamanho...]";
     }
