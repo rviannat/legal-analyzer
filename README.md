@@ -1,480 +1,409 @@
 # Legal Analyzer — Análise Jurídica de Processos com Agentes de IA
 
-Backend em **Java 17 + Spring Boot 3** que recebe um PDF de processo/documentos
-jurídicos, extrai o texto, e usa uma **pipeline de agentes de IA** (por padrão
-**Ollama**, rodando um modelo local — nenhum documento sai da sua máquina) para
-produzir uma análise estruturada completa.
+Backend em **Java 17 + Spring Boot 3** que recebe PDFs de processos/documentos jurídicos, extrai e estrutura o conteúdo e executa uma pipeline assíncrona de agentes de IA. O provedor padrão é o **Ollama**, permitindo processamento local sem enviar o documento para terceiros.
+
+O projeto combina três camadas de inteligência:
+
+1. **Análise documental** — entende o que está dentro do PDF.
+2. **Análise especializada** — agentes jurídicos trabalham sobre o caso já estruturado.
+3. **Auditoria externa** — o **DataJud/CNJ** confronta o processo com metadados e movimentações oficiais disponíveis publicamente.
+
+> **Importante:** o Legal Analyzer é uma ferramenta de apoio à análise jurídica. Os resultados gerados por IA e os dados públicos devem ser revisados por profissional habilitado.
 
 ## O que o sistema faz
 
-Endpoint `POST /api/v1/processos/analisar` (multipart, campo `arquivo`):
+Endpoint principal: `POST /api/v1/processos/analisar` (multipart, campo `arquivo`).
 
-| # | Tarefa | Onde é feita |
-|---|--------|--------------|
-| 1 | Lê os documentos | `PdfTextExtractionService` (Apache PDFBox) |
-| 2 | Identifica as partes | `ExtractionAgent` |
-| 3 | Identifica a cronologia | `ExtractionAgent` |
-| 4 | Identifica os pedidos | `ExtractionAgent` |
-| 5 | Identifica as decisões | `ExtractionAgent` |
-| 6 | Identifica prazos/datas relevantes | `ExtractionAgent` |
-| 7 | Identifica documentos importantes | `ExtractionAgent` |
-| 8 | Resume o processo | `ResumoAgent` |
-| 9 | Aponta inconsistências | `InconsistenciaAgent` |
-| 10 | Organiza evidências | `EvidenciaAgent` |
-| 11 | Gera perguntas de investigação | `PerguntasAgent` |
-| 12 | Produz relatório executivo | `RelatorioExecutivoAgent` |
+| # | Tarefa | Componente |
+|---|---|---|
+| 1 | Extrai o texto do PDF | `PdfTextExtractionService` / PDFBox |
+| 2 | Divide processos grandes em chunks | `PdfTextChunker` |
+| 3 | Identifica partes | `ExtractionAgent` |
+| 4 | Identifica cronologia | `ExtractionAgent` |
+| 5 | Identifica pedidos | `ExtractionAgent` |
+| 6 | Identifica decisões | `ExtractionAgent` |
+| 7 | Identifica prazos e datas | `ExtractionAgent` |
+| 8 | Identifica documentos relevantes | `ExtractionAgent` |
+| 9 | Consolida resultados de múltiplos chunks | `ConsolidationAgent` |
+| 10 | Resume o processo | `ResumoAgent` |
+| 11 | Detecta inconsistências | `InconsistenciaAgent` |
+| 12 | Organiza evidências | `EvidenciaAgent` |
+| 13 | Gera perguntas de investigação | `PerguntasAgent` |
+| 14 | Produz relatório executivo | `RelatorioExecutivoAgent` |
+| 15 | Enriquece a capa com dados públicos | `DataJudService` / `DataJudAuditoria` |
+| 16 | Sincroniza a linha do tempo com movimentações oficiais | `DataJudAuditoria` |
 
-Quando um processo é grande, o texto é dividido em vários trechos (chunks);
-cada trecho passa pelo `ExtractionAgent` (tarefas 2-7) e os resultados
-parciais são então unificados pelo `ConsolidationAgent` (dedup + ordenação
-cronológica) antes de seguir para as tarefas 8-12, que trabalham sobre os
-dados já consolidados.
+Quando o processo é grande, os resultados dos chunks são consolidados antes das etapas finais. A análise base é assíncrona e o frontend pode acompanhar o progresso por ID.
 
 ## Arquitetura
 
-```
-PDF (multipart) 
-   │
-   ▼
-PdfTextExtractionService  (PDFBox: PDF -> texto puro)
-   │
-   ▼
-PdfTextChunker  (divide texto grande em trechos com overlap)
-   │
-   ▼
-ExtractionAgent × N trechos   ──►  ConsolidationAgent (se N > 1)
-                                          │
-                     ┌────────────────────┼───────────────────────┐
-                     ▼                    ▼                       ▼
-               ResumoAgent      InconsistenciaAgent        EvidenciaAgent
-                     │                    │                       │
-                     └─────────┬──────────┴───────────┬───────────┘
-                                ▼                      ▼
-                         PerguntasAgent      RelatorioExecutivoAgent
-                                │                      │
-                                └──────────┬───────────┘
-                                           ▼
-                             AnaliseProcessoResponse (JSON)
+```text
+PDF
+ │
+ ▼
+PdfTextExtractionService
+ │
+ ▼
+PdfTextChunker
+ │
+ ▼
+ExtractionAgent × N
+ │
+ ▼
+ConsolidationAgent
+ │
+ ├──► ResumoAgent
+ ├──► InconsistenciaAgent
+ ├──► EvidenciaAgent
+ ├──► PerguntasAgent
+ └──► RelatorioExecutivoAgent
+          │
+          ├──────────────► DataJudService
+          │                     │
+          │                     ▼
+          │               DataJudAuditoria
+          │                     │
+          │                     ├── enriquecimento da capa
+          │                     └── auditoria da timeline
+          │
+          ▼
+AnaliseProcessoResponse
+          │
+          ▼
+Análise especializada opcional
+          │
+          ├── ProcessAgent
+          ├── ContractAgent
+          ├── DocumentAgent
+          ├── DeadlineAgent
+          ├── EvidenceAgent
+          ├── LegalResearchAgent
+          ├── DraftingAgent
+          └── SeniorLawyerAgent
 ```
 
-Toda a comunicação com o modelo é feita através da interface `AiClient`
-(`com.rafaelvianna.legalanalyzer.ai`), implementada por padrão por
-`OllamaAiClient` (endpoint `POST /api/chat` do Ollama, `stream: false` e
-`format: "json"`). A implementação `AnthropicAiClient` (Claude) continua no
-projeto como alternativa: a escolha é feita pela propriedade
-`legal-analyzer.ai.provider` (`ollama` — padrão — ou `anthropic`), via
-`@ConditionalOnProperty`, sem que nenhum agente precise mudar.
+Toda comunicação com IA passa pela interface `AiClient`. O projeto possui `OllamaAiClient` como implementação padrão e `AnthropicAiClient` como alternativa configurável.
 
 ## Estrutura do projeto
 
-```
+```text
 src/main/java/com/rafaelvianna/legalanalyzer/
-├── LegalAnalyzerApplication.java
-├── config/             AppProperties, AsyncConfig, WebConfig (CORS)
-├── async/              Jobs em memória: análise base e análise especializada
-├── web/                ProcessoAnaliseController, GlobalExceptionHandler
-│   └── dto/            Records de request/response (partes, pedidos, decisões, ...)
-├── pdf/                PdfTextExtractionService, PdfTextChunker
-├── ai/                 AiClient, OllamaAiClient (padrão), AnthropicAiClient, AiJsonSupport
+├── ai/                 Clientes de IA e suporte JSON
+├── async/              Jobs assíncronos da análise base/especializada
+├── config/             Configuração, propriedades e CORS
+├── datajud/            Integração e auditoria DataJud/CNJ
+├── pdf/                Extração e chunking de PDFs
+├── rag/                Índice e chat ancorado no processo
 ├── analysis/
-│   ├── LegalAnalysisOrchestrator.java   (orquestra a pipeline completa)
-│   ├── agents/          Um agente por tarefa (Extraction, Consolidation,
-│   │                    Resumo, Inconsistencia, Evidencia, Perguntas,
-│   │                    RelatorioExecutivo)
-│   ├── specialized/     Análise especializada: SpecializedAnalysisOrchestrator
-│   │   └── agents/      Process, Contract, Document, LegalResearch, Deadline,
-│   │                    Evidence, Drafting e SeniorLawyer Agent
-│   ├── research/        LegalSourceProvider + AllowlistLegalSourceProvider
-│   │                    (pesquisa restrita a domínios autorizados)
-│   └── prompts/         PromptTemplates e SpecializedPromptTemplates
-└── exception/          Exceções de domínio (PDF inválido, arquivo grande, erro de IA)
+│   ├── agents/         Agentes da análise base
+│   ├── specialized/    Orquestração e agentes especializados
+│   ├── research/       Pesquisa jurídica com allowlist
+│   └── prompts/        Prompts dos agentes
+├── web/                Controllers e DTOs
+└── exception/          Exceções de domínio
 ```
 
-## Pré-requisitos
+## Análise especializada — 8 agentes
 
-- JDK 17+
-- Maven 3.9+
-- [Ollama](https://ollama.com) instalado e em execução, com um modelo baixado:
+A análise especializada só é liberada depois da conclusão da análise base e é disparada explicitamente pelo advogado.
+
+| Agente | Responsabilidade |
+|---|---|
+| `ProcessAgent` | Fase processual, teses, controvérsias, forças, fragilidades, estratégia e prognóstico |
+| `ContractAgent` | Cláusulas de risco, obrigações, multas, prazos, condições e inconsistências |
+| `DocumentAgent` | Classificação documental e roteamento do caso |
+| `LegalResearchAgent` | Pesquisa jurídica rastreável e baseada em fontes autorizadas |
+| `DeadlineAgent` | Prazos, audiências, vencimentos e eventos críticos |
+| `EvidenceAgent` | Relação entre alegações, provas e lacunas probatórias |
+| `DraftingAgent` | Rascunhos de parecer, manifestação, petição, relatório e e-mail |
+| `SeniorLawyerAgent` | Consolidação e parecer final dos agentes especializados |
+
+Fluxo:
+
+```text
+Análise base concluída
+        │
+        ▼
+DocumentAgent
+   ┌────┴────┐
+   ▼         ▼
+Process   Contract
+   └────┬────┘
+        ▼
+Deadline → Evidence → LegalResearch (opcional)
+                         │
+                         ▼
+                  Drafting (opcional)
+                         │
+                         ▼
+                 SeniorLawyerAgent
+```
+
+### Endpoint
 
 ```bash
-ollama serve                 # sobe o servidor em http://localhost:11434
-ollama pull llama3.1:8b      # ou qwen2.5:14b, mistral-nemo, gemma2:27b, etc.
+curl -X POST http://localhost:8080/api/v1/processos/analises/{idDaAnaliseBase}/especializada \
+  -H "Content-Type: application/json" \
+  -d '{
+    "parteRepresentada": "Construtora Alfa Ltda",
+    "contextoAdicional": "Defendemos a ré; objetivo é reduzir a multa contratual.",
+    "pesquisaJuridica": true,
+    "consultaPesquisa": "onus da prova em acao de cobranca CPC art. 373",
+    "forcarContrato": true,
+    "rascunhos": ["PARECER", "EMAIL_CLIENTE"]
+  }'
 ```
 
-Recomenda-se um modelo com boa aderência a JSON e contexto grande, já que os
-agentes recebem trechos longos de processos. Não há chave de API nem custo por
-chamada — mas o desempenho depende da sua máquina (GPU/VRAM).
+Todos os campos são opcionais: `parteRepresentada`, `contextoAdicional`, `pesquisaJuridica`, `consultaPesquisa`, `forcarProcesso`, `forcarContrato` e `rascunhos`.
+
+## Integração DataJud — auditoria oficial do processo
+
+O Legal Analyzer possui uma camada específica para integração com a **API Pública do DataJud do Conselho Nacional de Justiça (CNJ)**.
+
+A documentação oficial da API está disponível em:
+
+https://www.cnj.jus.br/sistemas/datajud/api-publica/
+
+A integração não substitui o conteúdo do PDF. Ela funciona como uma **camada de auditoria e enriquecimento**, permitindo comparar o que o documento informa com o que está disponível na base pública do Poder Judiciário.
+
+### O que já está implementado
+
+#### 1. Identificação automática do processo
+
+O sistema identifica uma numeração CNJ no documento. Quando encontrada, a integração determina o tribunal a partir da numeração e consulta o endpoint público correspondente.
+
+Exemplo:
+
+```text
+0001234-56.2026.8.26.0000
+              │  │
+              │  └── código do tribunal/foro
+              └──── justiça estadual
+```
+
+A integração possui mapeamento para tribunais estaduais e também trata códigos de Justiça Federal, Justiça do Trabalho, STF e STJ quando suportados pela configuração atual.
+
+#### 2. Auditoria e enriquecimento da capa
+
+Quando o processo é localizado, os metadados públicos retornados podem enriquecer a análise com:
+
+- tribunal;
+- grau de jurisdição;
+- classe processual oficial;
+- órgão julgador;
+- quantidade de movimentações;
+- última movimentação;
+- movimentações oficiais e seus complementos.
+
+O resultado é representado por `DataJudInfo` e `DataJudAuditoria`.
+
+A resposta diferencia claramente:
+
+- `ENCONTRADO`;
+- `NAO_ENCONTRADO`;
+- `NAO_CONFIGURADO`;
+- `NUMERO_NAO_IDENTIFICADO`;
+- `INDISPONIVEL`;
+- `AGUARDANDO`.
+
+Isso evita que uma falha ou ausência no DataJud seja interpretada como inexistência do processo.
+
+### Validação das partes — limitação importante
+
+A API Pública do DataJud não deve ser tratada como fonte pública de nomes completos das partes. Por isso, a implementação atual **não declara divergência de nomes como fraude** com base apenas no DataJud.
+
+A auditoria registra explicitamente quando a validação de partes não pode ser concluída pela API pública. Essa decisão evita falso positivo e preserva o significado jurídico da evidência.
+
+A evolução planejada é permitir validação contra uma fonte oficial adequada quando houver base jurídica e técnica para isso.
+
+## Sincronização da linha do tempo e movimentações ocultas
+
+O `DataJudAuditoria` compara a cronologia extraída do PDF com as movimentações oficiais retornadas pelo DataJud.
+
+Para cada movimentação oficial, o sistema tenta localizar uma correspondência:
+
+```text
+DataJud
+  │
+  ├── data
+  ├── nome da movimentação
+  └── complementos
+       │
+       ▼
+PDF / cronologia extraída
+       │
+       ├── corresponde
+       │      └── CORRESPONDENTE_NO_PDF
+       │
+       └── não corresponde
+              └── NAO_ENCONTRADA_NO_PDF
+```
+
+O resultado produz uma **linha do tempo híbrida**, combinando:
+
+- eventos extraídos do PDF;
+- movimentações oficiais do DataJud;
+- indicação da origem (`PDF` ou `DATAJUD`);
+- status da correspondência;
+- indicação de eventos oficiais sem correspondente claro no documento;
+- data de publicação, quando identificada;
+- data de trânsito em julgado, quando identificada.
+
+### Importante sobre movimentações ocultas
+
+O alerta:
+
+> **Movimentação oficial sem correspondente no PDF**
+
+significa uma **lacuna de correspondência**, e não prova isoladamente que o processo esteja incompleto. O advogado deve conferir o processo oficial antes de concluir que existe documento faltante.
+
+## Legal Research Agent + TPU/CNJ
+
+O `LegalResearchAgent` foi projetado para pesquisar legislação e jurisprudência somente em fontes autorizadas e rastreáveis.
+
+A próxima camada de precisão da pesquisa utiliza os metadados processuais padronizados pelo CNJ, especialmente:
+
+- classe processual;
+- assuntos processuais;
+- códigos TPU;
+- tribunal/grau;
+- movimentações relevantes;
+- fatos e pedidos extraídos do PDF.
+
+A ideia é transformar uma pesquisa genérica como:
+
+```text
+"indenização dano moral"
+```
+
+em uma consulta contextualizada:
+
+```text
+Classe TPU + assunto TPU + tribunal + fato controvertido + fundamento legal
+```
+
+Isso reduz ruído e aumenta a precisão da pesquisa jurídica.
+
+### Estado atual
+
+A integração DataJud já fornece `classeProcessual`, tribunal, grau, órgão julgador e movimentações para a análise. A utilização desses metadados como filtros estruturados do `LegalResearchAgent` deve permanecer explícita e rastreável: o agente não deve inventar códigos TPU nem transformar uma classificação ausente em fato.
+
+Quando um código/assunto TPU não estiver disponível, a pesquisa deve continuar usando os dados efetivamente extraídos, registrando a lacuna.
+
+### Regras de rastreabilidade
+
+O `LegalResearchAgent` não deve citar legislação ou jurisprudência de memória. A pesquisa segue três princípios:
+
+1. **Allowlist de fontes** — somente domínios autorizados são consultados.
+2. **Contexto verificável** — o modelo recebe o conteúdo efetivamente recuperado.
+3. **Validação da referência** — referências não correspondentes às fontes consultadas são descartadas e registradas como lacuna.
+
+A pesquisa é desabilitada por padrão quando `LEGAL_RESEARCH_ENABLED=false`.
+
+## RAG e chat com o processo
+
+Depois da análise, o processo pode ser indexado para permitir briefing de assunção e chat ancorado no conteúdo.
+
+O índice combina:
+
+- texto do PDF, página por página;
+- ficha estruturada da análise;
+- embeddings do Ollama quando disponíveis;
+- busca lexical ponderada por IDF.
+
+O chat é obrigado a ancorar as respostas em trechos recuperados e páginas do documento. Marcadores de citação inventados são removidos.
+
+Endpoints principais:
+
+```text
+GET  /api/v1/processos/analises/{id}/briefing
+GET  /api/v1/processos/analises/{id}/briefing.md
+POST /api/v1/processos/analises/{id}/chat
+GET  /api/v1/processos/chats/{sessaoId}
+GET  /api/v1/processos/analises/{id}/indice
+```
 
 ## Configuração
 
-Variáveis de ambiente (todas com defaults sensatos em `application.yml`):
+Principais variáveis do Ollama:
 
 ```bash
-export AI_PROVIDER="ollama"                              # opcional (padrão: ollama)
-export OLLAMA_MODEL="llama3.1:8b"                        # opcional
-export OLLAMA_BASE_URL="http://localhost:11434/api/chat" # opcional
-export OLLAMA_MAX_TOKENS="4096"                          # opcional (num_predict)
-export OLLAMA_TEMPERATURE="0.2"                          # opcional
-export OLLAMA_TIMEOUT_SECONDS="600"                      # opcional (modelo local é mais lento)
-export OLLAMA_CONTEXT_WINDOW="16384"                     # opcional (num_ctx)
-export OLLAMA_JSON_MODE="true"                           # opcional (format: "json")
-export OLLAMA_KEEP_ALIVE="30m"                           # opcional (mantém o modelo carregado)
-export OLLAMA_API_KEY=""                                 # só se houver proxy com bearer token
+export AI_PROVIDER="ollama"
+export OLLAMA_MODEL="llama3.1:8b"
+export OLLAMA_BASE_URL="http://localhost:11434/api/chat"
+export OLLAMA_MAX_TOKENS="4096"
+export OLLAMA_TEMPERATURE="0.2"
+export OLLAMA_TIMEOUT_SECONDS="600"
+export OLLAMA_CONTEXT_WINDOW="16384"
+export OLLAMA_JSON_MODE="true"
+export OLLAMA_KEEP_ALIVE="30m"
 ```
 
-### Voltar para a Anthropic (Claude)
+Configuração DataJud:
 
-O `AnthropicAiClient` segue disponível; basta trocar o provedor e apontar as
-mesmas propriedades genéricas de IA para a API da Anthropic:
-
-```bash
-export AI_PROVIDER="anthropic"
-export OLLAMA_API_KEY="sk-ant-..."   # lida em legal-analyzer.ai.api-key
-export OLLAMA_MODEL="claude-sonnet-4-5"
-export OLLAMA_BASE_URL="https://api.anthropic.com/v1/messages"
+```yaml
+legal-analyzer:
+  data-jud:
+    enabled: true
+    api-key: ${DATAJUD_API_KEY:}
+    base-url: ${DATAJUD_BASE_URL:https://api-publica.datajud.cnj.jus.br}
+    timeout-seconds: ${DATAJUD_TIMEOUT_SECONDS:20}
 ```
 
-### Notas de desempenho com modelo local
+Use a chave fornecida pelo CNJ/DataJud através de variável de ambiente. Não grave credenciais no Git.
 
-- `chunk-char-size` foi reduzido para **20000** caracteres (era 45000), porque
-  modelos locais costumam ter janela de contexto menor que a do Claude. Se usar
-  um modelo com contexto grande, aumente `chunk-char-size` e `context-window`
-  juntos.
-- `timeout-seconds` subiu para **600**: inferência local em CPU pode levar
-  minutos por chamada, e a pipeline faz de 5 a N+5 chamadas.
-- `keep-alive` evita recarregar o modelo em memória entre as chamadas da
-  pipeline.
+## Execução
 
-Outros parâmetros (tamanho máximo de PDF, tamanho de chunk, overlap) ficam em
-`src/main/resources/application.yml`, sob `legal-analyzer.pdf`.
+Pré-requisitos:
 
-## Executando
+- JDK 17+
+- Maven 3.9+
+- Ollama em execução quando `AI_PROVIDER=ollama`
+- chave DataJud configurada quando a integração estiver habilitada
 
 ```bash
-cd legal-analyzer
 mvn clean install
 mvn spring-boot:run
 ```
 
-A aplicação sobe em `http://localhost:8080`.
+A aplicação sobe, por padrão, em `http://localhost:8080`.
 
-## Exemplo de uso
+Teste rápido:
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/processos/analisar \
   -F "arquivo=@/caminho/para/processo.pdf"
 ```
 
-Resposta (resumida — todos os campos são retornados de fato):
+## Performance com Ollama local
 
-```json
-{
-  "metadata": {
-    "nomeArquivo": "processo.pdf",
-    "quantidadeCaracteresExtraidos": 138422,
-    "quantidadeTrechosProcessados": 4,
-    "modeloIaUtilizado": "llama3.1:8b",
-    "dataProcessamento": "2026-08-12T14:32:10Z"
-  },
-  "partes": [
-    { "nome": "João da Silva", "papel": "autor", "qualificacao": "...", "observacoes": "" }
-  ],
-  "cronologia": [
-    { "data": "2023-04-10", "descricaoEvento": "Distribuição da petição inicial", "fase": "conhecimento" }
-  ],
-  "pedidos": [ { "descricaoPedido": "...", "parteRequerente": "...", "fundamentoLegal": "...", "status": "pendente" } ],
-  "decisoes": [ { "data": "2023-09-02", "tipoDecisao": "sentença", "resumoDecisao": "...", "autoridade": "...", "efeitos": "..." } ],
-  "prazos": [ { "data": "2026-09-15", "descricaoPrazo": "Prazo para recurso", "criticidade": "alta", "parteResponsavel": "réu" } ],
-  "documentosImportantes": [ { "nomeDocumento": "Laudo pericial", "tipo": "prova técnica", "dataDocumento": "2023-07-01", "relevancia": "alta" } ],
-  "resumoProcesso": "Trata-se de ação de...",
-  "inconsistencias": [ { "descricao": "...", "elementosConflitantes": "...", "gravidade": "média", "recomendacao": "..." } ],
-  "gruposEvidencia": [ { "categoria": "Prova documental", "documentos": ["Laudo pericial"], "relevanciaProbatoria": "alta", "observacoes": "" } ],
-  "perguntasInvestigacao": [ "O laudo pericial foi contestado por assistente técnico da parte contrária?" ],
-  "relatorioExecutivo": {
-    "titulo": "Relatório Executivo — Processo X",
-    "visaoGeral": "...",
-    "pontosCriticos": ["..."],
-    "recomendacoes": ["..."],
-    "proximosPassos": ["..."],
-    "conclusao": "..."
-  }
-}
-```
+Modelos locais podem ser o principal gargalo do sistema, especialmente em CPU. Processos grandes podem gerar dezenas ou centenas de chamadas de inferência.
 
-## Análise especializada (8 agentes)
+Recomendações:
 
-Concluída a análise base, a resposta de `GET /api/v1/processos/analises/{id}`
-passa a trazer o bloco `analiseEspecializada`, com o endpoint e as opções
-disponíveis. É uma etapa **opcional**, executada por escolha do advogado.
+- utilizar modelo com boa aderência a JSON;
+- manter `keep-alive` habilitado;
+- ajustar `chunk-char-size` de acordo com a memória disponível;
+- configurar timeout compatível com inferência local;
+- limitar análises simultâneas;
+- considerar GPU/VRAM para produção.
 
-| # | Agente | O que faz |
-|---|--------|-----------|
-| 1 | `ProcessAgent` | Analisa o processo completo: fase, teses, pontos controvertidos, forças, fragilidades, estratégia e prognóstico |
-| 2 | `ContractAgent` | Analisa contratos: cláusulas de risco, obrigações, multas, prazos, condições e inconsistências |
-| 3 | `DocumentAgent` | Classifica os documentos automaticamente (natureza do material + categoria de cada peça) |
-| 4 | `LegalResearchAgent` | Pesquisa legislação/jurisprudência **somente em fontes autorizadas e rastreáveis**, apresentando as referências utilizadas |
-| 5 | `DeadlineAgent` | Extrai datas e eventos importantes (prazos, audiências, vencimentos) |
-| 6 | `EvidenceAgent` | Relaciona cada alegação com os documentos que podem sustentá-la e aponta lacunas probatórias |
-| 7 | `DraftingAgent` | Gera rascunhos de parecer, manifestação, relatório, petição e e-mail ao cliente — **sempre para revisão do advogado** |
-| 8 | `SeniorLawyerAgent` | Agente **orquestrador**: recebe o trabalho dos demais e produz o resultado final |
+O sistema deve continuar tratando timeout/indisponibilidade do DataJud como uma falha isolada da camada de auditoria, sem destruir a análise documental.
 
-### Fluxo
+## Persistência e produção
 
-```
-Análise base concluída (AnaliseJob guarda texto extraído + resultado)
-   │
-   ▼
-DocumentAgent  (classifica e decide o roteamento)
-   │
-   ├──► ProcessAgent    (se o material parecer processo, ou forcarProcesso=true)
-   └──► ContractAgent   (se o material parecer contrato,  ou forcarContrato=true)
-   │
-   ▼
-DeadlineAgent ──► EvidenceAgent ──► LegalResearchAgent (opcional)
-   │
-   ▼
-DraftingAgent  (rascunhos solicitados, opcional)
-   │
-   ▼
-SeniorLawyerAgent  ──►  AnaliseEspecializadaResponse (JSON)
-```
+Atualmente os jobs e o índice podem operar em memória. Para produção, os próximos passos naturais são:
 
-A falha de um agente especialista não interrompe o fluxo: o erro entra em
-`avisos` e o Senior Lawyer trata o item como lacuna.
-
-### Endpoints
-
-```bash
-# 1. dispara a análise especializada sobre uma análise base já concluída
-curl -X POST http://localhost:8080/api/v1/processos/analises/{idDaAnaliseBase}/especializada \
-  -H "Content-Type: application/json" \
-  -d '{
-        "parteRepresentada": "Construtora Alfa Ltda",
-        "contextoAdicional": "Defendemos a ré; objetivo é reduzir a multa contratual.",
-        "pesquisaJuridica": true,
-        "consultaPesquisa": "onus da prova em acao de cobranca CPC art. 373",
-        "forcarContrato": true,
-        "rascunhos": ["PARECER", "EMAIL_CLIENTE"]
-      }'
-# -> 202 Accepted + { "id": "...", "status": "RECEBIDO", ... }
-
-# 2. acompanha o progresso / obtém o resultado
-curl http://localhost:8080/api/v1/processos/analises-especializadas/{id}
-```
-
-Campos do corpo (todos opcionais): `parteRepresentada`, `contextoAdicional`,
-`pesquisaJuridica`, `consultaPesquisa` (se vazia, é derivada do caso),
-`forcarProcesso`, `forcarContrato`, `rascunhos` (`PARECER`, `MANIFESTACAO`,
-`RELATORIO`, `PETICAO`, `EMAIL_CLIENTE`).
-
-O resultado (`AnaliseEspecializadaResponse`) traz `classificacaoDocumental`,
-`analiseProcessual`, `analiseContratual`, `agendaPrazos`, `matrizEvidencias`,
-`pesquisaJuridica`, `rascunhos`, `parecerSenior`, além de `agentesExecutados`
-e `avisos`.
-
-### Pesquisa jurídica: só fontes autorizadas e rastreáveis
-
-O `LegalResearchAgent` nunca cita de memória. O conteúdo vem do
-`AllowlistLegalSourceProvider`, e há três travas:
-
-1. **Allowlist de domínios** — só URLs cujo host esteja em
-   `legal-analyzer.legal-research.dominios-autorizados` são baixadas; a
-   verificação é refeita **após cada redirecionamento**.
-2. **O modelo só vê o texto baixado** — o prompt recebe apenas os trechos
-   recuperados, com nome da fonte e URL.
-3. **Validação da saída** — toda referência cuja URL não corresponda a uma
-   das URLs efetivamente consultadas é **descartada**, e o descarte é
-   registrado em `lacunas`. As referências mantidas vêm com `url`,
-   `trechoRelevante` literal, `consultadoEm` e `verificada: true`.
-
-A pesquisa vem **desabilitada por padrão** (`LEGAL_RESEARCH_ENABLED=false`).
-Desligada, o agente responde `pesquisaRealizada: false` com o motivo — e
-nenhuma legislação ou jurisprudência é citada. Fontes e domínios padrão
-(LexML, STF, STJ, Planalto, CNJ, Senado, Câmara, DOU) ficam em
-`application.yml`; para usar uma base própria, inclua o domínio na allowlist
-e a `url-template` (com `{consulta}`) na lista de fontes.
-
-### Rascunhos: revisão obrigatória
-
-Todo rascunho sai com `avisoRevisao` explícito, `pontosDeAtencao` e
-`lacunasParaPreencher`. O prompt proíbe inventar número de processo, vara,
-valores, datas e fundamentos legais — nesses pontos o texto usa marcadores
-`[CONFERIR]`, `[COMPLETAR]` e `[FUNDAMENTO A VALIDAR]`.
-
-## Briefing de assunção do caso + chat com o processo (RAG)
-
-O entregável desta etapa **não é "resuma este PDF"**. É responder à pergunta:
-
-> "Explique este processo para um advogado que acabou de assumir o caso."
-
-Depois da análise, o caso é indexado e passam a existir dois recursos: o
-**briefing de assunção** (estruturado, previsível, com ponteiro de página) e um
-**chat ancorado**, que só responde citando documento e página.
-
-### Como o caso é indexado
-
-O índice de cada caso combina duas fontes:
-
-| Origem | Conteúdo | Citação gerada |
-|---|---|---|
-| `TEXTO_PROCESSO` | texto do PDF, **página por página** (`PdfTextExtractionService.extractPages`) | "Documento — página 42" |
-| `FICHA_ANALISE` | fatos já apurados pelos agentes: partes, cronologia, pedidos, decisões, prazos, inconsistências, cláusulas de risco, matriz de evidências, parecer sênior | "Análise — cronologia" |
-
-Indexar as fichas junto com o texto é o que permite ao chat responder
-"quais são os pontos controvertidos?" sem depender de o modelo reler o
-processo inteiro a cada pergunta.
-
-**Busca híbrida** (`IndiceProcesso`): similaridade de cosseno sobre embeddings
-do Ollama (`nomic-embed-text`, via `POST /api/embeddings`) somada a uma busca
-léxica ponderada por IDF. A parte léxica é essencial no jurídico, onde a
-pergunta traz o termo exato ("cláusula 7.2", "Documento 17", nome da parte).
-
-Se o modelo de embeddings não estiver disponível, o sistema **registra o aviso
-e continua em modo léxico** — a análise nunca falha por causa do RAG:
-
-```bash
-ollama pull nomic-embed-text     # habilita a busca semântica
-# sem esse modelo, o índice funciona apenas em modo léxico
-```
-
-### Briefing de assunção
-
-`GET /api/v1/processos/analises/{id}/briefing` (JSON)
-`GET /api/v1/processos/analises/{id}/briefing.md` (Markdown pronto para a pasta do caso)
-
-Estrutura fixa, na ordem em que o advogado lê:
-
-1. **Processo** — numeração única CNJ extraída por regex do próprio documento
-   (`0001234-56.2026.8.26.0000`); se não houver, "não identificado" — nunca um
-   número inferido.
-2. **Partes** — nome, papel e qualificação.
-3. **Situação** — resumo executivo de ~1 página escrito para quem está
-   assumindo o caso agora, mais "onde estamos", "o que está em jogo" e
-   "próxima ação".
-4. **Linha do tempo** — tabela `Data | Evento | Onde conferir`, em ordem
-   cronológica, com as decisões incluídas.
-5. **Pontos de atenção** — classificados: `CONTRADICAO`
-   ("Documento X contradiz a petição inicial"), `ALEGACAO_SEM_DOCUMENTO`,
-   `DECISAO_RELEVANTE`, `PRAZO_CRITICO`, `CLAUSULA_DE_RISCO`, `LACUNA`.
-   Ordenados por gravidade.
-6. **Evidências** — o rastro `Alegação → Documento 17 → página 42`.
-7. **Perguntas para o advogado** — o contrato original está disponível? houve
-   notificação extrajudicial? existe comprovante de pagamento? existe
-   comunicação posterior ao evento? (mais as lacunas específicas apuradas
-   pelos agentes).
-
-**Somente a "situação" é escrita pelo modelo.** Tabelas, ponteiros de página,
-classificação de pontos de atenção e perguntas são montados de forma
-determinística a partir do que os agentes apuraram. Se o modelo falhar, o
-briefing continua sendo entregue com o resumo da análise base e um aviso.
-
-A página em "Onde conferir" e na coluna `Página` só aparece quando o termo foi
-**efetivamente localizado no texto do PDF**. Quando não foi, o campo vem nulo e
-o status é `NAO_LOCALIZADO_NO_PDF` — uma lacuna explícita vale mais que um
-ponteiro inventado.
-
-### Chat com o processo
-
-```bash
-# pergunta (sessaoId opcional; omita para iniciar uma conversa)
-curl -X POST http://localhost:8080/api/v1/processos/analises/{id}/chat \
-  -H "Content-Type: application/json" \
-  -d '{"pergunta":"Existe comprovante de pagamento da terceira parcela?"}'
-```
-
-```json
-{
-  "sessaoId": "3f2a...",
-  "resposta": "Sim. O Documento 17 comprova o pagamento da terceira parcela [T1], e o prazo de réplica vence em 20/05/2026 [T2].",
-  "citacoes": [
-    { "rotulo": "Documento — página 42", "pagina": 42, "origem": "TEXTO_PROCESSO", "trecho": "Documento 17 - comprovante..." },
-    { "rotulo": "Análise — prazos", "pagina": null, "origem": "FICHA_ANALISE", "trecho": "20/05/2026: prazo para réplica..." }
-  ],
-  "fundamentada": true,
-  "modoRecuperacao": "semantica+lexica",
-  "perguntasSugeridas": ["Há comprovante das demais parcelas?"],
-  "aviso": "Resposta de apoio gerada automaticamente..."
-}
-```
-
-Travas contra citação falsa (`ValidadorAncoragem`):
-
-- o modelo recebe os trechos numerados `[T1]...[Tn]` e é obrigado a citar o
-  marcador de cada afirmação;
-- marcadores que **não existem** no contexto recuperado são apagados da
-  resposta;
-- se não restar nenhum marcador válido, a resposta é **descartada** e
-  substituída por "Não consta no material analisado.", com a indicação do que
-  precisaria ser localizado nos autos;
-- o prompt proíbe citar legislação, súmula, valor ou data fora dos trechos.
-
-Outros endpoints:
-
-```bash
-# histórico da conversa (para recarregar a tela)
-GET /api/v1/processos/chats/{sessaoId}
-
-# diagnóstico do índice: passagens, páginas e se a busca semântica está ativa
-GET /api/v1/processos/analises/{id}/indice
-```
-
-O índice é montado ao final da análise base e **reconstruído** quando a análise
-especializada termina — a partir daí o chat também cita cláusulas de risco,
-prazos detalhados e a matriz de evidências.
-
-### Configuração do RAG
-
-```yaml
-legal-analyzer:
-  rag:
-    embeddings-habilitados: true      # RAG_EMBEDDINGS_ENABLED
-    embedding-model: nomic-embed-text # RAG_EMBEDDING_MODEL
-    embedding-base-url: http://localhost:11434/api/embeddings
-    tamanho-passagem-chars: 1200      # tamanho de cada passagem indexada
-    max-passagens-por-resposta: 8     # trechos no contexto de cada resposta
-    score-minimo: 0.05                # corte de relevância
-    max-mensagens-historico: 6        # histórico reenviado ao modelo
-```
-
-## Limitações e próximos passos (para uso em produção)
-
-Este projeto é um ponto de partida sólido, mas antes de ir para produção com
-documentos jurídicos reais, considere:
-
-- **Persistência dos jobs**: as análises (base e especializada) rodam de forma
-  assíncrona, mas o estado fica em memória (`ConcurrentHashMap`). Um restart
-  perde os jobs em andamento e os resultados — para produção, mova para banco
-  ou cache distribuído.
-- **Armazenamento vetorial em memória**: o índice do RAG (`IndiceProcesso`)
-  vive no processo e a busca é linear sobre as passagens. Funciona bem para
-  processos individuais; para uma base com milhares de casos, migre para um
-  banco vetorial (pgvector, Qdrant) mantendo a mesma interface
-  `EmbeddingClient` + busca híbrida.
-- **Sessões de chat em memória**: o histórico das conversas se perde no
-  restart; persistir também serve de trilha de auditoria do que foi respondido
-  ao advogado.
-- **PDFs escaneados / sem camada de texto**: `PdfTextExtractionService`
-  lança erro se não conseguir extrair texto. Adicionar OCR (ex.: Tesseract)
-  como fallback é recomendado para digitalizações.
-- **Segurança e sigilo profissional**: documentos jurídicos são sensíveis
-  (segredo de justiça, dados pessoais). Rodar o modelo localmente via Ollama
-  resolve a parte de não enviar o documento a terceiros, mas ainda é
-  recomendado adicionar autenticação/autorização (ex.: Spring Security +
-  OAuth2) e criptografia em trânsito/repouso.
-- **Persistência**: atualmente nada é salvo — a resposta é devolvida e
-  descartada. Se quiser histórico/auditoria, adicione um banco de dados
-  (ex.: PostgreSQL) e uma tabela de análises.
-- **Capacidade e concorrência**: cada análise dispara de 5 a N+5 chamadas ao
-  modelo (N = número de chunks). Com Ollama não há custo por token, mas há
-  um gargalo de GPU/CPU — implemente uma fila, retry/backoff e limite de
-  análises simultâneas para uso em escala.
-- **Qualidade do modelo**: modelos locais menores erram mais em extração
-  estruturada que modelos de fronteira. Vale testar 2-3 modelos
-  (`llama3.1:8b`, `qwen2.5:14b`, `gemma2:27b`) com processos reais antes de
-  fixar um.
-- **Validação jurídica**: as respostas dos agentes são geradas por IA e
-  podem conter erros ou omissões — este sistema é uma ferramenta de apoio,
-  não substitui a revisão de um advogado.
+- PostgreSQL para análises, jobs, auditoria e histórico;
+- armazenamento persistente dos PDFs;
+- pgvector ou Qdrant para escala do RAG;
+- fila de processamento;
+- retry/backoff para IA e DataJud;
+- autenticação/autorização;
+- criptografia em trânsito e repouso;
+- trilha de auditoria;
+- OCR para PDFs digitalizados;
+- observabilidade e métricas.
 
 ## Testes
 
@@ -482,25 +411,24 @@ documentos jurídicos reais, considere:
 mvn test
 ```
 
-Cobertura atual:
+A suíte cobre componentes de extração/chunking, RAG, ancoragem, clientes de IA, seleção de provedor, pesquisa jurídica e orquestração especializada. A integração DataJud deve possuir testes específicos para resolução de tribunal, tratamento de respostas, auditoria de timeline e indisponibilidade da API.
 
-- `PdfTextChunkerTest` — divisão de texto com sobreposição.
-- `IndiceProcessoTest` — recuperação em modo léxico (sem embeddings),
-  normalização de acentos, ordenação por cosseno e rastreio de página
-  (inclusive a garantia de **não** apontar página para termo inexistente).
-- `ValidadorAncoragemTest` — a trava contra citação falsa: marcador inventado
-  é removido e resposta sem citação válida é rebaixada para não fundamentada.
-- `BriefingAssuncaoServiceTest` — montagem do dossiê completo, ordem
-  cronológica, alegação sem documento virando ponto de atenção, ausência de
-  página quando o documento não é localizado e entrega do briefing mesmo com o
-  modelo fora do ar.
-- `OllamaAiClientTest` — servidor HTTP local simulando o `/api/chat` do Ollama:
-  payload enviado e tratamento de erros, sem precisar de modelo carregado.
-- `AiProviderSelectionTest` / `AnthropicProviderSelectionTest` — seleção do
-  provedor via `legal-analyzer.ai.provider`.
-- `AllowlistLegalSourceProviderTest` — allowlist de domínios, recusa de host
-  não autorizado, limpeza de HTML, truncamento e limite de fontes.
-- `SpecializedAnalysisOrchestratorTest` — roteamento entre Process e Contract
-  Agent, `forcarContrato`, pesquisa desabilitada sem citações, descarte de
-  referência com URL não rastreável, aviso de revisão nos rascunhos e
-  isolamento de falha de agente.
+## Roadmap jurídico
+
+```text
+[OK] Análise documental com agentes
+[OK] Análise especializada opcional
+[OK] RAG + chat ancorado
+[OK] Integração DataJud
+[OK] Enriquecimento de capa com metadados públicos
+[OK] Auditoria da timeline contra movimentações oficiais
+[OK] Identificação de movimentações oficiais sem correspondência clara no PDF
+[PRÓXIMO] Alimentar LegalResearchAgent com metadados TPU/DataJud
+[PRÓXIMO] Refinar pesquisa por classe + assunto + tribunal + fato
+[PRÓXIMO] Persistência PostgreSQL
+[PRÓXIMO] Auditoria completa e histórico de consultas
+```
+
+## Aviso jurídico
+
+O Legal Analyzer é software de apoio à análise. Nenhuma saída de IA deve ser considerada, isoladamente, uma conclusão jurídica definitiva. Dados do DataJud representam a informação disponibilizada pela API pública no momento da consulta e podem estar sujeitos a limitações, atrasos, indisponibilidade ou restrições de publicidade.
