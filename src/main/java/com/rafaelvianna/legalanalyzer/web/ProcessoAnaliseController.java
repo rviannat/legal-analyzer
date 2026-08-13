@@ -52,7 +52,7 @@ public class ProcessoAnaliseController {
     public ResponseEntity<DataJudTimelineAuditoria> consultarTimelineDataJud(@PathVariable String id) {
         AnaliseJob job = jobService.buscar(id);
         if (job.resultado() == null) return ResponseEntity.ok(DataJudTimelineAuditoria.indisponivel(job.dataJud()));
-        return ResponseEntity.ok(DataJudAuditoria.sincronizarTimeline(job.dataJud(), job.textoExtraido(), job.resultado().eventosCronologia()));
+        return ResponseEntity.ok(DataJudAuditoria.sincronizarTimeline(job.dataJud(), job.textoExtraido(), job.resultado().cronologia()));
     }
 
     @PostMapping(value = "/analises/{id}/especializada", consumes = MediaType.APPLICATION_JSON_VALUE)
