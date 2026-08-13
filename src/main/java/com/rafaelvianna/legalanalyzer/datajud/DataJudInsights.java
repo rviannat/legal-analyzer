@@ -20,19 +20,10 @@ public record DataJudInsights(
         String fonte,
         String mensagem,
         Instant consultadoEm) {
-
     public enum Status { DISPONIVEL, PARCIAL, NAO_DISPONIVEL }
 
     public static DataJudInsights indisponivel(DataJudInfo info, String mensagem) {
-        return new DataJudInsights(
-                Status.NAO_DISPONIVEL,
-                info.tribunal(),
-                null,
-                info.classeProcessual(),
-                null,
-                info.orgaoJulgador(),
-                null, null, null, null, null, null, null, null,
-                mensagem,
-                Instant.now());
+        return new DataJudInsights(Status.NAO_DISPONIVEL, info.tribunal(), null, info.classeProcessual(), null,
+                info.orgaoJulgador(), null, null, null, null, null, null, null, null, mensagem, Instant.now());
     }
 }
