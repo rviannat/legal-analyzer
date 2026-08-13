@@ -10,6 +10,7 @@ public record AppProperties(Ai ai, Pdf pdf, Especializada especializada, LegalRe
     public record Especializada(int amostraTextoChars, int maxRascunhos, int maxCharsRascunho) {
         public int amostraTextoCharsOuPadrao() { return amostraTextoChars > 0 ? amostraTextoChars : 16_000; }
         public int maxRascunhosOuPadrao() { return maxRascunhos > 0 ? maxRascunhos : 5; }
+        public int maxCharsRascunhoOuPadrao() { return maxCharsRascunho > 0 ? maxCharsRascunho : 8_000; }
     }
     public record LegalResearch(boolean enabled, List<String> dominiosAutorizados, List<FonteJuridica> fontes, int maxCharsPorFonte, int maxFontesPorConsulta, int timeoutSeconds) {
         public List<String> dominiosOuVazio() { return dominiosAutorizados == null ? List.of() : dominiosAutorizados; }
@@ -29,12 +30,13 @@ public record AppProperties(Ai ai, Pdf pdf, Especializada especializada, LegalRe
         public int maxMensagensHistorico() { return maxMensagensHistorico > 0 ? maxMensagensHistorico : 6; }
         public static Rag padrao() { return new Rag(false, "nomic-embed-text", "http://localhost:11434/api/embeddings", 60, 1_200, 200, 4_000, 8, 0.05, 6); }
     }
-    /** Configuração da API Pública do DataJud/CNJ. A chave nunca deve ser commitada. */
-    public record DataJud(boolean enabled, String baseUrl, String apiKey, int timeoutSeconds) {
+    /** Configuração da API Pública do DataJud/CNJ e, opcionalmente, de uma fonte agregada oficial de estatísticas. */
+    public record DataJud(boolean enabled, String baseUrl, String apiKey, int timeoutSeconds, String estatisticasUrl) {
         public String baseUrlOuPadrao() { return baseUrl == null || baseUrl.isBlank() ? "https://api-publica.datajud.cnj.jus.br" : baseUrl; }
         public int timeoutSecondsOuPadrao() { return timeoutSeconds > 0 ? timeoutSeconds : 30; }
         public boolean configurado() { return enabled && apiKey != null && !apiKey.isBlank(); }
-        public static DataJud desabilitado() { return new DataJud(false, "https://api-publica.datajud.cnj.jus.br", "", 30); }
+        public boolean estatisticasConfiguradas() { return estatisticasUrl != null && !estatisticasUrl.isBlank() && configurado(); }
+        public static DataJud desabilitado() { return new DataJud(false, "https://api-publica.datajud.cnj.jus.br", "", 30, ""); }
     }
     public record FonteJuridica(String nome, String urlTemplate) {}
 }
