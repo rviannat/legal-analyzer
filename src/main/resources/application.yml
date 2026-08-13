@@ -17,11 +17,11 @@ legal-analyzer:
     provider: ${AI_PROVIDER:ollama}
     # No Ollama local não há chave de API; use apenas se houver proxy/gateway com bearer token
     api-key: ${OLLAMA_API_KEY:}
-    model: ${OLLAMA_MODEL:llama3.1:8b}
+    model: ${OLLAMA_MODEL:llama3.2:3b}
     base-url: ${OLLAMA_BASE_URL:http://localhost:11434/api/chat}
     max-tokens: ${OLLAMA_MAX_TOKENS:4096}
-    temperature: ${OLLAMA_TEMPERATURE:0.2}
-    timeout-seconds: ${OLLAMA_TIMEOUT_SECONDS:600}
+    temperature: ${OLLAMA_TEMPERATURE:0.1}
+    timeout-seconds: ${OLLAMA_TIMEOUT_SECONDS:300}
     # num_ctx: precisa acomodar prompt + chunk (chunk-char-size / ~3.5 chars por token)
     context-window: ${OLLAMA_CONTEXT_WINDOW:16384}
     # format=json — obriga o modelo a devolver JSON válido (todos os agentes esperam JSON)

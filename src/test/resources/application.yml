@@ -1,0 +1,13 @@
+legal-analyzer:
+  ai:
+    provider: ollama
+    model: llama3.2:3b
+    base-url: http://127.0.0.1:11434/api/chat
+    temperature: 0.1
+    timeout-seconds: 300s
+  legal-research:
+    enabled: false
+    dominios-autorizados: []
+    fontes: []
+  rag:
+    embeddings-habilitados: false
