@@ -10,32 +10,26 @@ spring:
       max-file-size: ${MAX_FILE_SIZE:25MB}
       max-request-size: ${MAX_REQUEST_SIZE:25MB}
 
-# Configurações específicas da aplicação (ver AppProperties.java)
 legal-analyzer:
   ai:
     model: ${OLLAMA_MODEL:llama3.2:3b}
-    # Limite deliberadamente menor para Ollama em CPU: respostas JSON menores
-    # reduzem tempo de inferência e pressão de memória.
     max-tokens: ${OLLAMA_MAX_TOKENS:768}
     context-window: ${OLLAMA_CONTEXT_WINDOW:2048}
     base-url: ${OLLAMA_BASE_URL:http://localhost:11434/api/chat}
     provider: ${AI_PROVIDER:ollama}
     api-key: ${OLLAMA_API_KEY:}
     temperature: ${OLLAMA_TEMPERATURE:0.2}
-    timeout-seconds: ${OLLAMA_TIMEOUT_SECONDS:300}
+    timeout-seconds: ${OLLAMA_TIMEOUT_SECONDS:90}
     json-mode: ${OLLAMA_JSON_MODE:true}
-    keep-alive: ${OLLAMA_KEEP_ALIVE:30m}
-
+    keep-alive: ${OLLAMA_KEEP_ALIVE:10m}
   pdf:
     max-file-size-bytes: ${MAX_FILE_SIZE_BYTES:26214400}
-    # Chunks menores deixam o llama3.2:3b muito mais responsivo em CPU.
-    chunk-char-size: ${PDF_CHUNK_CHAR_SIZE:3500}
+    chunk-char-size: ${PDF_CHUNK_CHAR_SIZE:7000}
     chunk-overlap-chars: ${PDF_CHUNK_OVERLAP_CHARS:250}
-
   especializada:
-    amostra-texto-chars: ${ESPECIALIZADA_AMOSTRA_CHARS:6000}
-    max-rascunhos: ${ESPECIALIZADA_MAX_RASCUNHOS:5}
-    max-chars-rascunho: ${ESPECIALIZADA_MAX_CHARS_RASCUNHO:8000}
+    amostra-texto-chars: ${ESPECIALIZADA_AMOSTRA_CHARS:8000}
+    max-rascunhos: ${ESPECIALIZADA_MAX_RASCUNHOS:3}
+    max-chars-rascunho: ${ESPECIALIZADA_MAX_CHARS_RASCUNHO:5000}
   legal-research:
     enabled: ${LEGAL_RESEARCH_ENABLED:false}
     dominios-autorizados:
@@ -49,7 +43,7 @@ legal-analyzer:
       - camara.leg.br
       - in.gov.br
     fontes:
-      - nome: "LexML - legislacao e jurisprudencia (Rede de Informacao Legislativa e Juridica)"
+      - nome: "LexML - legislacao e jurisprudencia"
         url-template: "https://www.lexml.gov.br/busca/search?keyword={consulta}"
       - nome: "STF - pesquisa de jurisprudencia"
         url-template: "https://jurisprudencia.stf.jus.br/pages/search?base=acordaos&query={consulta}"
@@ -58,7 +52,6 @@ legal-analyzer:
     max-chars-por-fonte: ${LEGAL_RESEARCH_MAX_CHARS:8000}
     max-fontes-por-consulta: ${LEGAL_RESEARCH_MAX_FONTES:3}
     timeout-seconds: ${LEGAL_RESEARCH_TIMEOUT_SECONDS:20}
-
   rag:
     embeddings-habilitados: ${RAG_EMBEDDINGS_ENABLED:false}
     embedding-model: ${RAG_EMBEDDING_MODEL:nomic-embed-text}
