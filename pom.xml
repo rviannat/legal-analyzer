@@ -49,6 +49,16 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <!--
+                    Em máquinas com pouca RAM total (ex.: ~7 GB), o G1 GC padrão
+                    pode falhar ao reservar memória nativa logo na inicialização
+                    da JVM (ver hs_err_pid*.log). Limitamos a heap e trocamos
+                    para o Serial GC, que exige bem menos memória nativa.
+                    Ajuste -Xmx para cima se sua máquina tiver mais RAM livre.
+                -->
+                <configuration>
+                    <jvmArguments>-Xms128m -Xmx512m -Xss256k -XX:+UseSerialGC</jvmArguments>
+                </configuration>
             </plugin>
             <!--
                 A suíte contém testes SpringBootTest. Em máquinas de desenvolvimento
