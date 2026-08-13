@@ -13,19 +13,22 @@ spring:
 legal-analyzer:
   ai:
     model: ${OLLAMA_MODEL:llama3.2:3b}
-    max-tokens: ${OLLAMA_MAX_TOKENS:768}
+    # Perfil CPU: respostas curtas e contexto pequeno reduzem drasticamente a inferência local.
+    max-tokens: ${OLLAMA_MAX_TOKENS:256}
     context-window: ${OLLAMA_CONTEXT_WINDOW:2048}
     base-url: ${OLLAMA_BASE_URL:http://localhost:11434/api/chat}
     provider: ${AI_PROVIDER:ollama}
     api-key: ${OLLAMA_API_KEY:}
-    temperature: ${OLLAMA_TEMPERATURE:0.2}
-    timeout-seconds: ${OLLAMA_TIMEOUT_SECONDS:90}
+    temperature: ${OLLAMA_TEMPERATURE:0.0}
+    timeout-seconds: ${OLLAMA_TIMEOUT_SECONDS:120}
     json-mode: ${OLLAMA_JSON_MODE:true}
     keep-alive: ${OLLAMA_KEEP_ALIVE:10m}
   pdf:
     max-file-size-bytes: ${MAX_FILE_SIZE_BYTES:26214400}
-    chunk-char-size: ${PDF_CHUNK_CHAR_SIZE:7000}
-    chunk-overlap-chars: ${PDF_CHUNK_OVERLAP_CHARS:250}
+    # 7.000 chars era grande demais para inferência CPU com llama3.2:3b.
+    # 2.500 chars mantém contexto jurídico suficiente sem saturar a janela.
+    chunk-char-size: ${PDF_CHUNK_CHAR_SIZE:2500}
+    chunk-overlap-chars: ${PDF_CHUNK_OVERLAP_CHARS:150}
   especializada:
     amostra-texto-chars: ${ESPECIALIZADA_AMOSTRA_CHARS:8000}
     max-rascunhos: ${ESPECIALIZADA_MAX_RASCUNHOS:3}
