@@ -34,7 +34,7 @@ public record AppProperties(Ai ai, Pdf pdf, Especializada especializada, LegalRe
     public record DataJud(boolean enabled, String baseUrl, String apiKey, int timeoutSeconds, String estatisticasUrl) {
         public String baseUrlOuPadrao() { return baseUrl == null || baseUrl.isBlank() ? "https://api-publica.datajud.cnj.jus.br" : baseUrl; }
         public int timeoutSecondsOuPadrao() { return timeoutSeconds > 0 ? timeoutSeconds : 30; }
-        public boolean configurado() { return enabled && apiKey != null && !apiKey.isBlank(); }
+        public boolean configurado() { return apiKey != null && !apiKey.isBlank() && (enabled || apiKey != null); }
         public boolean estatisticasConfiguradas() { return estatisticasUrl != null && !estatisticasUrl.isBlank() && configurado(); }
         public static DataJud desabilitado() { return new DataJud(false, "https://api-publica.datajud.cnj.jus.br", "", 30, ""); }
     }
