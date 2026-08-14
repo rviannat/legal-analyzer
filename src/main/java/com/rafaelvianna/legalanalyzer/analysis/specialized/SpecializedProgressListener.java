@@ -9,11 +9,14 @@ import java.util.List;
 public interface SpecializedProgressListener {
     void update(AnaliseEspecializadaStatus status, int progresso, String etapa, String mensagem);
 
-    /** Evento rico: o listener legado continua funcionando, enquanto o job pode persistir telemetria detalhada. */
+    /** Compatibilidade com listeners existentes, mantendo a telemetria rica no log persistido. */
     default void updateRich(AnaliseEspecializadaStatus status, int progresso, String agente, int agenteNumero,
                             int totalAgentes, String acao, String mensagem, List<String> contextoRecebido,
                             String resultadoParcial) {
-        update(status, progresso, agente + " — " + acao, mensagem);
+        String contexto = contextoRecebido == null || contextoRecebido.isEmpty() ? "nenhum" : String.join(" -> ", contextoRecebido);
+        String resultado = resultadoParcial == null || resultadoParcial.isBlank() ? "em processamento" : resultadoParcial;
+        update(status, progresso, agente + " — " + acao,
+                mensagem + " | contexto recebido: " + contexto + " | resultado: " + resultado + " | agente " + agenteNumero + "/" + totalAgentes);
     }
 
     static SpecializedProgressListener noop() { return (status, progresso, etapa, mensagem) -> {}; }
