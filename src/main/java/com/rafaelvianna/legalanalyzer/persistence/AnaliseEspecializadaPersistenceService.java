@@ -8,8 +8,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -61,28 +59,28 @@ public class AnaliseEspecializadaPersistenceService {
     }
 
     @Transactional(readOnly = true)
-    public byte[] relatorio(String id) {
-        return repository.findById(id).map(AnaliseEspecializadaEntity::getRelatorioPdf).orElse(null);
-    }
+    public byte[] relatorio(String id) { return repository.findById(id).map(AnaliseEspecializadaEntity::getRelatorioPdf).orElse(null); }
 
     @Transactional(readOnly = true)
-    public AnaliseEspecializadaEntity buscar(String id) {
-        return repository.findById(id).orElse(null);
-    }
+    public AnaliseEspecializadaEntity buscar(String id) { return repository.findById(id).orElse(null); }
 
     @Transactional(readOnly = true)
-    public AnaliseEspecializadaEntity ultimaDaBase(String analiseBaseId) {
-        return repository.findFirstByAnaliseBaseIdOrderByAtualizadoEmDesc(analiseBaseId).orElse(null);
-    }
+    public AnaliseEspecializadaEntity ultimaDaBase(String analiseBaseId) { return repository.findFirstByAnaliseBaseIdOrderByAtualizadoEmDesc(analiseBaseId).orElse(null); }
 
-    private String serializar(List<Map<String, Object>> logs) {
-        try { return objectMapper.writeValueAsString(logs == null ? List.of() : logs); }
-        catch (Exception e) { return "[]"; }
+    public AnaliseEspecializadaResponse resultado(AnaliseEspecializadaEntity entity) {
+        if (entity == null || entity.getResultadoJson() == null || entity.getResultadoJson().isBlank()) return null;
+        try { return objectMapper.readValue(entity.getResultadoJson(), AnaliseEspecializadaResponse.class); }
+        catch (Exception e) { log.warn("[ESPECIALIZADA:{}] Não foi possível desserializar o resultado persistido: {}", entity.getId(), e.getMessage()); return null; }
     }
 
     public List<Map<String, Object>> desserializarLogs(String json) {
         if (json == null || json.isBlank()) return List.of();
         try { return objectMapper.readValue(json, new TypeReference<List<Map<String, Object>>>() {}); }
         catch (Exception e) { log.warn("Não foi possível ler logs da análise especializada: {}", e.getMessage()); return List.of(); }
+    }
+
+    private String serializar(List<Map<String, Object>> logs) {
+        try { return objectMapper.writeValueAsString(logs == null ? List.of() : logs); }
+        catch (Exception e) { return "[]"; }
     }
 }
