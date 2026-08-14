@@ -28,31 +28,52 @@ public class RelatorioPdfService {
 
     public byte[] gerar(String nomeArquivo, String cnj, AnaliseProcessoResponse resultado) {
         if (resultado == null) throw new IllegalArgumentException("Resultado da análise não disponível para gerar o PDF.");
-        try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            List<String> linhas = new ArrayList<>();
-            linhas.add("LEGAL ANALYZER - RELATÓRIO EXECUTIVO");
-            linhas.add("Arquivo: " + nomeArquivo);
-            linhas.add("CNJ: " + (cnj == null ? "não identificado" : cnj));
-            linhas.add("");
-            adicionarSecao(linhas, "METADADOS", resultado.metadata());
-            adicionarSecao(linhas, "PARTES", resultado.partes());
-            adicionarSecao(linhas, "CRONOLOGIA", resultado.cronologia());
-            adicionarSecao(linhas, "PEDIDOS", resultado.pedidos());
-            adicionarSecao(linhas, "DECISÕES", resultado.decisoes());
-            adicionarSecao(linhas, "PRAZOS", resultado.prazos());
-            adicionarSecao(linhas, "DOCUMENTOS IMPORTANTES", resultado.documentosImportantes());
-            adicionarTexto(linhas, "RESUMO DO PROCESSO", resultado.resumoProcesso());
-            adicionarSecao(linhas, "INCONSISTÊNCIAS", resultado.inconsistencias());
-            adicionarSecao(linhas, "GRUPOS DE EVIDÊNCIA", resultado.gruposEvidencia());
-            adicionarSecao(linhas, "PERGUNTAS DE INVESTIGAÇÃO", resultado.perguntasInvestigacao());
-            adicionarSecao(linhas, "RELATÓRIO EXECUTIVO", resultado.relatorioExecutivo());
+        List<String> linhas = new ArrayList<>();
+        linhas.add("LEGAL ANALYZER - RELATÓRIO EXECUTIVO");
+        linhas.add("Arquivo: " + nomeArquivo);
+        linhas.add("CNJ: " + (cnj == null ? "não identificado" : cnj));
+        linhas.add("");
+        adicionarSecao(linhas, "METADADOS", resultado.metadata());
+        adicionarSecao(linhas, "PARTES", resultado.partes());
+        adicionarSecao(linhas, "CRONOLOGIA", resultado.cronologia());
+        adicionarSecao(linhas, "PEDIDOS", resultado.pedidos());
+        adicionarSecao(linhas, "DECISÕES", resultado.decisoes());
+        adicionarSecao(linhas, "PRAZOS", resultado.prazos());
+        adicionarSecao(linhas, "DOCUMENTOS IMPORTANTES", resultado.documentosImportantes());
+        adicionarTexto(linhas, "RESUMO DO PROCESSO", resultado.resumoProcesso());
+        adicionarSecao(linhas, "INCONSISTÊNCIAS", resultado.inconsistencias());
+        adicionarSecao(linhas, "GRUPOS DE EVIDÊNCIA", resultado.gruposEvidencia());
+        adicionarSecao(linhas, "PERGUNTAS DE INVESTIGAÇÃO", resultado.perguntasInvestigacao());
+        adicionarSecao(linhas, "RELATÓRIO EXECUTIVO", resultado.relatorioExecutivo());
+        return gerarPdf(linhas, "PDF BASE");
+    }
 
+    /** Gera o relatório persistível da análise dos oito agentes especializados. */
+    public byte[] gerarEspecializada(String nomeArquivo, String analiseBaseId, Object resultado) {
+        if (resultado == null) throw new IllegalArgumentException("Resultado especializado não disponível para gerar o PDF.");
+        List<String> linhas = new ArrayList<>();
+        linhas.add("LEGAL ANALYZER - RELATÓRIO ESPECIALIZADO");
+        linhas.add("Arquivo: " + nomeArquivo);
+        linhas.add("Análise base: " + analiseBaseId);
+        linhas.add("Agentes: Document, Process, Contract, Deadline, Evidence, Legal Research, Drafting e Senior Lawyer");
+        linhas.add("");
+        adicionarSecao(linhas, "RESULTADO COMPLETO DOS AGENTES", resultado);
+        return gerarPdf(linhas, "PDF ESPECIALIZADO");
+    }
+
+    private byte[] gerarPdf(List<String> linhas, String tipo) {
+        try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PDPage page = new PDPage(PDRectangle.A4);
             document.addPage(page);
             PDPageContentStream stream = new PDPageContentStream(document, page);
             float y = page.getMediaBox().getHeight() - MARGIN;
             for (String linha : linhas) {
-                if (y < MARGIN) { stream.endText(); stream.close(); page = new PDPage(PDRectangle.A4); document.addPage(page); stream = new PDPageContentStream(document, page); y = page.getMediaBox().getHeight() - MARGIN; }
+                if (y < MARGIN) {
+                    stream.endText(); stream.close();
+                    page = new PDPage(PDRectangle.A4); document.addPage(page);
+                    stream = new PDPageContentStream(document, page);
+                    y = page.getMediaBox().getHeight() - MARGIN;
+                }
                 stream.beginText();
                 stream.setFont(PDType1Font.HELVETICA, linha.startsWith("LEGAL ANALYZER") ? 14 : FONT_SIZE);
                 stream.newLineAtOffset(MARGIN, y);
@@ -63,11 +84,11 @@ public class RelatorioPdfService {
             stream.close();
             document.save(output);
             byte[] pdf = output.toByteArray();
-            log.info("PDF GERADO | arquivo={} | cnj={} | bytes={} | paginas={}", nomeArquivo, cnj, pdf.length, document.getNumberOfPages());
+            log.info("{} GERADO | bytes={} | paginas={}", tipo, pdf.length, document.getNumberOfPages());
             return pdf;
         } catch (Exception e) {
-            log.error("Falha ao gerar PDF | arquivo={} | cnj={} | {}", nomeArquivo, cnj, e.getMessage(), e);
-            throw new IllegalStateException("Não foi possível gerar o relatório PDF.", e);
+            log.error("Falha ao gerar {}: {}", tipo, e.getMessage(), e);
+            throw new IllegalStateException("Não foi possível gerar o relatório PDF especializado.", e);
         }
     }
 
