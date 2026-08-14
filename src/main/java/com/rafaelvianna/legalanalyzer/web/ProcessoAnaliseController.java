@@ -13,7 +13,9 @@ import com.rafaelvianna.legalanalyzer.datajud.DataJudInsightsService;
 import com.rafaelvianna.legalanalyzer.datajud.DataJudTimelineAuditoria;
 import com.rafaelvianna.legalanalyzer.exception.DocumentTooLargeException;
 import com.rafaelvianna.legalanalyzer.exception.PdfProcessingException;
+import com.rafaelvianna.legalanalyzer.persistence.ProcessoPersistenceService;
 import com.rafaelvianna.legalanalyzer.web.dto.specialized.AnaliseEspecializadaRequest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -26,32 +28,35 @@ public class ProcessoAnaliseController {
     private final AnaliseJobService jobService;
     private final AnaliseEspecializadaJobService especializadaService;
     private final DataJudInsightsService insightsService;
+    private final ProcessoPersistenceService persistenceService;
     private final AppProperties properties;
 
-    public ProcessoAnaliseController(AnaliseJobService jobService, AnaliseEspecializadaJobService especializadaService, DataJudInsightsService insightsService, AppProperties properties) {
-        this.jobService = jobService; this.especializadaService = especializadaService; this.insightsService = insightsService; this.properties = properties;
+    public ProcessoAnaliseController(AnaliseJobService jobService, AnaliseEspecializadaJobService especializadaService, DataJudInsightsService insightsService, ProcessoPersistenceService persistenceService, AppProperties properties) {
+        this.jobService=jobService; this.especializadaService=especializadaService; this.insightsService=insightsService; this.persistenceService=persistenceService; this.properties=properties;
     }
-    @PostMapping(value = "/analisar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<AnaliseJobResponse> analisar(@RequestParam("arquivo") MultipartFile arquivo) { validarArquivo(arquivo); return ResponseEntity.status(HttpStatus.ACCEPTED).body(jobService.iniciar(arquivo)); }
+    @PostMapping(value="/analisar", consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<AnaliseJobResponse> analisar(@RequestParam("arquivo") MultipartFile arquivo){ validarArquivo(arquivo); return ResponseEntity.status(HttpStatus.ACCEPTED).body(jobService.iniciar(arquivo)); }
     @GetMapping("/analises/{id}")
-    public ResponseEntity<AnaliseJobResponse> consultar(@PathVariable String id) { AnaliseJob job = jobService.buscar(id); return ResponseEntity.ok(AnaliseJobResponse.status(job, especializadaService.opcao(job))); }
-    @GetMapping("/analises/{id}/datajud")
-    public ResponseEntity<DataJudInfo> consultarDataJud(@PathVariable String id) { return ResponseEntity.ok(jobService.buscar(id).dataJud()); }
-    @GetMapping("/analises/{id}/datajud/auditoria")
-    public ResponseEntity<DataJudAuditoria> consultarAuditoriaDataJud(@PathVariable String id) { AnaliseJob job = jobService.buscar(id); return ResponseEntity.ok(DataJudAuditoria.de(job.dataJud(), job.resultado() == null ? java.util.List.of() : job.resultado().partes())); }
-    @GetMapping("/analises/{id}/datajud/timeline")
-    public ResponseEntity<DataJudTimelineAuditoria> consultarTimelineDataJud(@PathVariable String id) { AnaliseJob job = jobService.buscar(id); if (job.resultado() == null) return ResponseEntity.ok(DataJudTimelineAuditoria.indisponivel(job.dataJud())); return ResponseEntity.ok(DataJudAuditoria.sincronizarTimeline(job.dataJud(), job.textoExtraido(), job.resultado().cronologia())); }
-    @GetMapping("/analises/{id}/datajud/insights")
-    public ResponseEntity<DataJudInsights> consultarInsightsDataJud(@PathVariable String id) { return ResponseEntity.ok(insightsService.analisar(jobService.buscar(id).dataJud())); }
-    @PostMapping(value = "/analises/{id}/especializada", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<AnaliseEspecializadaJobResponse> analisarEspecializada(@PathVariable String id, @RequestBody(required = false) AnaliseEspecializadaRequest request) { return ResponseEntity.status(HttpStatus.ACCEPTED).body(especializadaService.iniciar(id, request)); }
-    @GetMapping("/analises-especializadas/{id}")
-    public ResponseEntity<AnaliseEspecializadaJobResponse> consultarEspecializada(@PathVariable String id) { return ResponseEntity.ok(especializadaService.consultar(id)); }
-    @PostMapping(value = "/health") public ResponseEntity<String> health() { return ResponseEntity.ok("OK"); }
-    private void validarArquivo(MultipartFile arquivo) {
-        if (arquivo == null || arquivo.isEmpty()) throw new PdfProcessingException("Nenhum arquivo foi enviado. Envie um PDF no campo \"arquivo\".");
-        String contentType = arquivo.getContentType(); boolean pareceSerPdfPeloNome = arquivo.getOriginalFilename() != null && arquivo.getOriginalFilename().toLowerCase().endsWith(".pdf");
-        if ((contentType == null || !contentType.equalsIgnoreCase(MediaType.APPLICATION_PDF_VALUE)) && !pareceSerPdfPeloNome) throw new PdfProcessingException("O arquivo enviado precisa ser um PDF (application/pdf).");
-        long tamanhoMaximo = properties.pdf().maxFileSizeBytes(); if (arquivo.getSize() > tamanhoMaximo) throw new DocumentTooLargeException("Arquivo excede o tamanho máximo permitido de " + (tamanhoMaximo / 1_000_000) + "MB.");
+    public ResponseEntity<AnaliseJobResponse> consultar(@PathVariable String id){ AnaliseJob job=jobService.buscar(id); return ResponseEntity.ok(AnaliseJobResponse.status(job,especializadaService.opcao(job))); }
+    @GetMapping(value="/analises/{id}/relatorio-pdf", produces=MediaType.APPLICATION_PDF_VALUE)
+    public ResponseEntity<byte[]> baixarRelatorioPdf(@PathVariable String id){
+        byte[] pdf=persistenceService.relatorio(id);
+        if(pdf==null||pdf.length==0) return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        String nome=nomeRelatorio(jobService.buscar(id).nomeArquivo());
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_PDF).contentLength(pdf.length).header(HttpHeaders.CONTENT_DISPOSITION,"attachment; filename=\""+nome+"\"").body(pdf);
+    }
+    @GetMapping("/analises/{id}/datajud") public ResponseEntity<DataJudInfo> consultarDataJud(@PathVariable String id){ return ResponseEntity.ok(jobService.buscar(id).dataJud()); }
+    @GetMapping("/analises/{id}/datajud/auditoria") public ResponseEntity<DataJudAuditoria> consultarAuditoriaDataJud(@PathVariable String id){ AnaliseJob job=jobService.buscar(id); return ResponseEntity.ok(DataJudAuditoria.de(job.dataJud(),job.resultado()==null?java.util.List.of():job.resultado().partes())); }
+    @GetMapping("/analises/{id}/datajud/timeline") public ResponseEntity<DataJudTimelineAuditoria> consultarTimelineDataJud(@PathVariable String id){ AnaliseJob job=jobService.buscar(id); if(job.resultado()==null)return ResponseEntity.ok(DataJudTimelineAuditoria.indisponivel(job.dataJud())); return ResponseEntity.ok(DataJudAuditoria.sincronizarTimeline(job.dataJud(),job.textoExtraido(),job.resultado().cronologia())); }
+    @GetMapping("/analises/{id}/datajud/insights") public ResponseEntity<DataJudInsights> consultarInsightsDataJud(@PathVariable String id){ return ResponseEntity.ok(insightsService.analisar(jobService.buscar(id).dataJud())); }
+    @PostMapping(value="/analises/{id}/especializada", consumes=MediaType.APPLICATION_JSON_VALUE) public ResponseEntity<AnaliseEspecializadaJobResponse> analisarEspecializada(@PathVariable String id,@RequestBody(required=false) AnaliseEspecializadaRequest request){ return ResponseEntity.status(HttpStatus.ACCEPTED).body(especializadaService.iniciar(id,request)); }
+    @GetMapping("/analises-especializadas/{id}") public ResponseEntity<AnaliseEspecializadaJobResponse> consultarEspecializada(@PathVariable String id){ return ResponseEntity.ok(especializadaService.consultar(id)); }
+    @PostMapping(value="/health") public ResponseEntity<String> health(){ return ResponseEntity.ok("OK"); }
+    private String nomeRelatorio(String nome){ String base=nome==null?"processo":nome.replaceAll("(?i)\\.pdf$",""); return base+"-relatorio.pdf"; }
+    private void validarArquivo(MultipartFile arquivo){
+        if(arquivo==null||arquivo.isEmpty())throw new PdfProcessingException("Nenhum arquivo foi enviado. Envie um PDF no campo \"arquivo\".");
+        String contentType=arquivo.getContentType(); boolean pareceSerPdfPeloNome=arquivo.getOriginalFilename()!=null&&arquivo.getOriginalFilename().toLowerCase().endsWith(".pdf");
+        if((contentType==null||!contentType.equalsIgnoreCase(MediaType.APPLICATION_PDF_VALUE))&&!pareceSerPdfPeloNome)throw new PdfProcessingException("O arquivo enviado precisa ser um PDF (application/pdf).");
+        long tamanhoMaximo=properties.pdf().maxFileSizeBytes(); if(arquivo.getSize()>tamanhoMaximo)throw new DocumentTooLargeException("Arquivo excede o tamanho máximo permitido de "+(tamanhoMaximo/1_000_000)+"MB.");
     }
 }
