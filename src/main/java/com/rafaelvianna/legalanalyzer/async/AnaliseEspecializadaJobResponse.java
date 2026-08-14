@@ -3,8 +3,10 @@ package com.rafaelvianna.legalanalyzer.async;
 import com.rafaelvianna.legalanalyzer.web.dto.specialized.AnaliseEspecializadaResponse;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 
-/** Status (e resultado, quando pronto) de uma análise especializada. */
+/** Status, telemetria e resultado (quando pronto) de uma análise especializada. */
 public record AnaliseEspecializadaJobResponse(
         String id,
         String analiseBaseId,
@@ -13,13 +15,17 @@ public record AnaliseEspecializadaJobResponse(
         int progresso,
         String etapa,
         String mensagem,
+        long estimativaRestanteSegundos,
         Instant criadoEm,
         Instant atualizadoEm,
+        List<Map<String, Object>> logs,
+        boolean relatorioDisponivel,
         AnaliseEspecializadaResponse resultado
 ) {
     public static AnaliseEspecializadaJobResponse status(AnaliseEspecializadaJob job) {
         return new AnaliseEspecializadaJobResponse(
                 job.id(), job.analiseBaseId(), job.nomeArquivo(), job.status(), job.progresso(),
-                job.etapa(), job.mensagem(), job.criadoEm(), job.atualizadoEm(), job.resultado());
+                job.etapa(), job.mensagem(), job.estimativaRestanteSegundos(), job.criadoEm(), job.atualizadoEm(),
+                job.logs(), job.resultado() != null, job.resultado());
     }
 }
