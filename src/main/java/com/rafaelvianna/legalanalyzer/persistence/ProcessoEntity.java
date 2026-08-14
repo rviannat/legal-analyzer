@@ -2,7 +2,6 @@ package com.rafaelvianna.legalanalyzer.persistence;
 
 import jakarta.persistence.*;
 import java.time.Instant;
-import java.util.UUID;
 
 @Entity
 @Table(name = "processos")
@@ -23,11 +22,11 @@ public class ProcessoEntity {
     private String etapa;
     @Column(length = 2000)
     private String mensagem;
-    @Lob @Basic(fetch = FetchType.LAZY)
-    @Column(name = "arquivo_pdf", nullable = false)
+    @Basic(fetch = FetchType.LAZY)
+    @Column(name = "arquivo_pdf", columnDefinition = "bytea", nullable = false)
     private byte[] arquivoPdf;
-    @Lob @Basic(fetch = FetchType.LAZY)
-    @Column(name = "relatorio_pdf")
+    @Basic(fetch = FetchType.LAZY)
+    @Column(name = "relatorio_pdf", columnDefinition = "bytea")
     private byte[] relatorioPdf;
     @Column(name = "criado_em", nullable = false)
     private Instant criadoEm;
