@@ -4,6 +4,7 @@ import com.rafaelvianna.legalanalyzer.datajud.DataJudInfo;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.function.BiConsumer;
 
 @Service
 public class ExternalValidationTeam {
@@ -32,20 +33,37 @@ public class ExternalValidationTeam {
     }
 
     public List<ExternalValidationResult> executar(String numeroProcesso) {
+        return executar(numeroProcesso, (agente, progresso) -> { });
+    }
+
+    public List<ExternalValidationResult> executar(String numeroProcesso, BiConsumer<String, Integer> progresso) {
         DataJudInfo info = processSearchAgent.consultar(numeroProcesso);
-        return executar(info);
+        return executar(info, progresso);
     }
 
     public List<ExternalValidationResult> executar(DataJudInfo info) {
+        return executar(info, (agente, progresso) -> { });
+    }
+
+    public List<ExternalValidationResult> executar(DataJudInfo info, BiConsumer<String, Integer> progresso) {
+        progresso.accept("ProcessSearchAgent", 10);
         ExternalValidationResult process = processSearchAgent.analisar(info);
+        progresso.accept("MovementAgent", 22);
         ExternalValidationResult movement = movementAgent.analisar(info);
+        progresso.accept("PartiesAgent", 34);
         ExternalValidationResult parties = partiesAgent.analisar(info);
+        progresso.accept("DecisionsAgent", 46);
         ExternalValidationResult decisions = decisionsAgent.analisar(info);
+        progresso.accept("CourtAgent", 58);
         ExternalValidationResult court = courtAgent.analisar(info);
+        progresso.accept("TimelineAgent", 70);
         ExternalValidationResult timeline = timelineAgent.analisar(info);
+        progresso.accept("ExternalEvidenceAgent", 82);
         ExternalValidationResult evidence = externalEvidenceAgent.analisar(info);
         List<ExternalValidationResult> results = List.of(process, movement, parties, decisions, court, timeline, evidence);
+        progresso.accept("JusReconciliationAgent", 94);
         ExternalValidationResult reconciliation = reconciliationAgent.reconciliar(info, results);
+        progresso.accept("JusReconciliationAgent", 100);
         return java.util.stream.Stream.concat(results.stream(), java.util.stream.Stream.of(reconciliation)).toList();
     }
 }
