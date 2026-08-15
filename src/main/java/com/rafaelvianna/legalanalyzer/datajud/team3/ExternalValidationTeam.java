@@ -10,8 +10,11 @@ import java.util.function.BiConsumer;
 /**
  * Fachada de compatibilidade para código legado. A implementação real fica em
  * analysis.external.ExternalValidationTeam; esta classe não possui agentes próprios.
+ *
+ * O nome explícito do bean evita colisão com a implementação principal durante
+ * a migração do job assíncrono para o novo pacote.
  */
-@Service
+@Service("legacyExternalValidationTeam")
 public class ExternalValidationTeam {
     private final com.rafaelvianna.legalanalyzer.analysis.external.ExternalValidationTeam delegate;
 
