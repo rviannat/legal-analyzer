@@ -62,7 +62,6 @@ public class ExternalValidationTeam {
         return execute(textoCompleto, contextoInterno, null);
     }
 
-    /** Executa a equipe e notifica o progresso depois de cada agente. */
     public ExternalValidationResult execute(String textoCompleto, ExtractionResult contextoInterno,
                                             BiConsumer<String, Integer> progresso) {
         String numeroProcesso = extrairCnj(textoCompleto);
@@ -70,9 +69,15 @@ public class ExternalValidationTeam {
             log.info("[EQUIPE 3] CNJ não identificado; validação externa não iniciada.");
             return ExternalValidationResult.semProcesso("CNJ não identificado no documento.");
         }
-
-        log.info("[EQUIPE 3] Iniciando validação externa do processo {}", numeroProcesso);
         DataJudInfo info = dataJudService.consultar(numeroProcesso);
+        return execute(info, contextoInterno, progresso);
+    }
+
+    /** Reutiliza uma consulta DataJud já realizada, evitando chamadas duplicadas. */
+    public ExternalValidationResult execute(DataJudInfo info, ExtractionResult contextoInterno,
+                                            BiConsumer<String, Integer> progresso) {
+        if (info == null) return ExternalValidationResult.semProcesso("Dados DataJud ausentes.");
+        log.info("[EQUIPE 3] Iniciando especialistas para o processo {}", info.numeroProcesso());
         List<ExternalAgentResult> resultados = new ArrayList<>();
 
         executar("ProcessSearchAgent", 12, () -> processSearchAgent.execute(info), resultados, progresso);
@@ -86,9 +91,8 @@ public class ExternalValidationTeam {
         ExternalAgentResult reconciliation = reconciliationAgent.execute(resultados, contextoInterno, info);
         resultados.add(reconciliation);
         if (progresso != null) progresso.accept("JusReconciliationAgent", 100);
-
         log.info("[EQUIPE 3] Validação concluída: status={}, agentes={}", reconciliation.status(), resultados.size());
-        return new ExternalValidationResult(numeroProcesso, info, resultados, reconciliation, Instant.now());
+        return new ExternalValidationResult(info.numeroProcesso(), info, resultados, reconciliation, Instant.now());
     }
 
     private void executar(String agente, int progresso, java.util.function.Supplier<ExternalAgentResult> acao,
