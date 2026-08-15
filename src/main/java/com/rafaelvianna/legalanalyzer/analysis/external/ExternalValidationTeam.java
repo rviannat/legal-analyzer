@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -27,6 +28,7 @@ import java.util.regex.Pattern;
 public class ExternalValidationTeam {
     private static final Logger log = LoggerFactory.getLogger(ExternalValidationTeam.class);
     private static final Pattern CNJ = Pattern.compile("\\b\\d{7}-\\d{2}\\.\\d{4}\\.\\d{1,2}\\.\\d{2}\\.\\d{4}\\b");
+    private static final String INSUFICIENTE_DADOS = "INSUFICIENTE_DADOS";
 
     private final DataJudService dataJudService;
     private final ProcessSearchAgent processSearchAgent;
@@ -77,21 +79,36 @@ public class ExternalValidationTeam {
     public ExternalValidationResult execute(DataJudInfo info, ExtractionResult contextoInterno,
                                             BiConsumer<String, Integer> progresso) {
         if (info == null) return ExternalValidationResult.semProcesso("Dados DataJud ausentes.");
-        log.info("[EQUIPE 3] Iniciando especialistas para o processo {}", info.numeroProcesso());
+        log.info("[EQUIPE 3] Iniciando especialistas para o processo {} | status={} | encontrado={}",
+                info.numeroProcesso(), info.status(), info.encontrado());
         List<ExternalAgentResult> resultados = new ArrayList<>();
 
         executar("ProcessSearchAgent", 12, () -> processSearchAgent.execute(info), resultados, progresso);
-        executar("MovementAgent", 24, () -> movementAgent.execute(info), resultados, progresso);
-        executar("PartiesAgent", 36, () -> partiesAgent.execute(info), resultados, progresso);
-        executar("DecisionsAgent", 48, () -> decisionsAgent.execute(info), resultados, progresso);
-        executar("CourtAgent", 60, () -> courtAgent.execute(info), resultados, progresso);
-        executar("TimelineAgent", 72, () -> timelineAgent.execute(info), resultados, progresso);
-        executar("ExternalEvidenceAgent", 84, () -> externalEvidenceAgent.execute(info, contextoInterno), resultados, progresso);
+
+        if (!info.encontrado()) {
+            String motivo = motivoInsuficiencia(info);
+            log.warn("[EQUIPE 3] PROCESSO NÃO LOCALIZADO | status={} | motivo={} | agentes dependentes receberão INSUFICIENTE_DADOS",
+                    info.status(), motivo);
+            registrarSemDados("MovementAgent", 24, motivo, resultados, progresso);
+            registrarSemDados("PartiesAgent", 36, motivo, resultados, progresso);
+            registrarSemDados("DecisionsAgent", 48, motivo, resultados, progresso);
+            registrarSemDados("CourtAgent", 60, motivo, resultados, progresso);
+            registrarSemDados("TimelineAgent", 72, motivo, resultados, progresso);
+            registrarSemDados("ExternalEvidenceAgent", 84, motivo, resultados, progresso);
+        } else {
+            executar("MovementAgent", 24, () -> movementAgent.execute(info), resultados, progresso);
+            executar("PartiesAgent", 36, () -> partiesAgent.execute(info), resultados, progresso);
+            executar("DecisionsAgent", 48, () -> decisionsAgent.execute(info), resultados, progresso);
+            executar("CourtAgent", 60, () -> courtAgent.execute(info), resultados, progresso);
+            executar("TimelineAgent", 72, () -> timelineAgent.execute(info), resultados, progresso);
+            executar("ExternalEvidenceAgent", 84, () -> externalEvidenceAgent.execute(info, contextoInterno), resultados, progresso);
+        }
 
         ExternalAgentResult reconciliation = reconciliationAgent.execute(resultados, contextoInterno, info);
         resultados.add(reconciliation);
         if (progresso != null) progresso.accept("JusReconciliationAgent", 100);
-        log.info("[EQUIPE 3] Validação concluída: status={}, agentes={}", reconciliation.status(), resultados.size());
+        log.info("[EQUIPE 3] Validação concluída: status={}, agentes={}, datajudEncontrado={}",
+                reconciliation.status(), resultados.size(), info.encontrado());
         return new ExternalValidationResult(info.numeroProcesso(), info, resultados, reconciliation, Instant.now());
     }
 
@@ -102,6 +119,24 @@ public class ExternalValidationTeam {
         resultados.add(resultado);
         log.info("[EQUIPE 3][AGENTE:{}] concluído | status={} | {}", agente, resultado.status(), resultado.summary());
         if (callback != null) callback.accept(agente, progresso);
+    }
+
+    private void registrarSemDados(String agente, int progresso, String motivo,
+                                   List<ExternalAgentResult> resultados, BiConsumer<String, Integer> callback) {
+        log.info("[EQUIPE 3][AGENTE:{}] INSUFICIENTE_DADOS | {}", agente, motivo);
+        resultados.add(new ExternalAgentResult(
+                agente,
+                INSUFICIENTE_DADOS,
+                "Informações insuficientes: o processo não foi localizado na fonte externa. O agente não interrompeu a análise e não deve inferir dados ausentes.",
+                Map.of("fonte", "DataJud/CNJ", "disponibilidade", false, "motivo", motivo),
+                Instant.now()));
+        if (callback != null) callback.accept(agente, progresso);
+    }
+
+    private String motivoInsuficiencia(DataJudInfo info) {
+        if (info == null) return "Dados DataJud ausentes.";
+        if (info.mensagem() != null && !info.mensagem().isBlank()) return info.mensagem();
+        return "Processo não localizado na fonte externa DataJud/CNJ.";
     }
 
     private String extrairCnj(String texto) {
@@ -124,7 +159,7 @@ public class ExternalValidationTeam {
         }
         public static ExternalValidationResult semProcesso(String mensagem) {
             ExternalAgentResult result = new ExternalAgentResult(
-                    "ExternalValidationTeam", "SEM_CNJ", mensagem, java.util.Map.of(), Instant.now());
+                    "ExternalValidationTeam", "SEM_CNJ", mensagem, Map.of(), Instant.now());
             return new ExternalValidationResult(null, null, List.of(result), result, Instant.now(), true);
         }
     }
