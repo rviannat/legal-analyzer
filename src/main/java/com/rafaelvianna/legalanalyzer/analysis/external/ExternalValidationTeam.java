@@ -18,14 +18,11 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Orquestra a Equipe 3. A consulta oficial é feita uma única vez e o mesmo
- * DataJudInfo é distribuído aos especialistas. A reunião final recebe também
- * o resultado consolidado da Equipe 1 para procurar divergências reais.
- */
+/** Orquestra a Equipe 3. A consulta oficial é feita uma única vez e os resultados são reconciliados. */
 @Service
 public class ExternalValidationTeam {
     private static final Logger log = LoggerFactory.getLogger(ExternalValidationTeam.class);
@@ -62,6 +59,12 @@ public class ExternalValidationTeam {
     }
 
     public ExternalValidationResult execute(String textoCompleto, ExtractionResult contextoInterno) {
+        return execute(textoCompleto, contextoInterno, null);
+    }
+
+    /** Executa a equipe e notifica o progresso depois de cada agente. */
+    public ExternalValidationResult execute(String textoCompleto, ExtractionResult contextoInterno,
+                                            BiConsumer<String, Integer> progresso) {
         String numeroProcesso = extrairCnj(textoCompleto);
         if (numeroProcesso == null) {
             log.info("[EQUIPE 3] CNJ não identificado; validação externa não iniciada.");
@@ -72,23 +75,29 @@ public class ExternalValidationTeam {
         DataJudInfo info = dataJudService.consultar(numeroProcesso);
         List<ExternalAgentResult> resultados = new ArrayList<>();
 
-        resultados.add(processSearchAgent.execute(info));
-        resultados.add(movementAgent.execute(info));
-        resultados.add(partiesAgent.execute(info));
-        resultados.add(decisionsAgent.execute(info));
-        resultados.add(courtAgent.execute(info));
-        resultados.add(timelineAgent.execute(info));
-        resultados.add(externalEvidenceAgent.execute(info, contextoInterno));
+        executar("ProcessSearchAgent", 12, () -> processSearchAgent.execute(info), resultados, progresso);
+        executar("MovementAgent", 24, () -> movementAgent.execute(info), resultados, progresso);
+        executar("PartiesAgent", 36, () -> partiesAgent.execute(info), resultados, progresso);
+        executar("DecisionsAgent", 48, () -> decisionsAgent.execute(info), resultados, progresso);
+        executar("CourtAgent", 60, () -> courtAgent.execute(info), resultados, progresso);
+        executar("TimelineAgent", 72, () -> timelineAgent.execute(info), resultados, progresso);
+        executar("ExternalEvidenceAgent", 84, () -> externalEvidenceAgent.execute(info, contextoInterno), resultados, progresso);
 
         ExternalAgentResult reconciliation = reconciliationAgent.execute(resultados, contextoInterno, info);
         resultados.add(reconciliation);
+        if (progresso != null) progresso.accept("JusReconciliationAgent", 100);
 
-        log.info("[EQUIPE 3] Validação concluída: status={}, divergências={}, confirmações={}",
-                reconciliation.status(),
-                reconciliation.data().getOrDefault("divergencias", List.of()).toString().split("severidade").length - 1,
-                reconciliation.data().getOrDefault("confirmacoes", List.of()).toString().split("tipo").length - 1);
-
+        log.info("[EQUIPE 3] Validação concluída: status={}, agentes={}", reconciliation.status(), resultados.size());
         return new ExternalValidationResult(numeroProcesso, info, resultados, reconciliation, Instant.now());
+    }
+
+    private void executar(String agente, int progresso, java.util.function.Supplier<ExternalAgentResult> acao,
+                          List<ExternalAgentResult> resultados, BiConsumer<String, Integer> callback) {
+        log.info("[EQUIPE 3][AGENTE:{}] iniciando", agente);
+        ExternalAgentResult resultado = acao.get();
+        resultados.add(resultado);
+        log.info("[EQUIPE 3][AGENTE:{}] concluído | status={} | {}", agente, resultado.status(), resultado.summary());
+        if (callback != null) callback.accept(agente, progresso);
     }
 
     private String extrairCnj(String texto) {
