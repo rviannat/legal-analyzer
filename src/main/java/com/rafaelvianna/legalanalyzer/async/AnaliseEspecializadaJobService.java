@@ -1,6 +1,10 @@
 package com.rafaelvianna.legalanalyzer.async;
 
 import com.rafaelvianna.legalanalyzer.analysis.specialized.SpecializedAnalysisOrchestrator;
+import com.rafaelvianna.legalanalyzer.datajud.DataJudInfo;
+import com.rafaelvianna.legalanalyzer.datajud.DataJudService;
+import com.rafaelvianna.legalanalyzer.datajud.team3.ExternalValidationResult;
+import com.rafaelvianna.legalanalyzer.datajud.team3.ExternalValidationTeam;
 import com.rafaelvianna.legalanalyzer.exception.PdfProcessingException;
 import com.rafaelvianna.legalanalyzer.persistence.AnaliseEspecializadaEntity;
 import com.rafaelvianna.legalanalyzer.persistence.AnaliseEspecializadaPersistenceService;
@@ -23,33 +27,38 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
-/** Dispara, persiste e acompanha a análise especializada de longa duração. */
+/** Orquestra a Equipe 2 e, somente depois de sua conclusão, a Equipe 3/DataJud. */
 @Service
 public class AnaliseEspecializadaJobService {
     private static final Logger log = LoggerFactory.getLogger(AnaliseEspecializadaJobService.class);
     public static final List<String> AGENTES = List.of("Document Agent", "Process Agent", "Contract Agent", "Deadline Agent", "Evidence Agent", "Legal Research Agent", "Drafting Agent", "Senior Lawyer Agent");
+    public static final List<String> AGENTES_EQUIPE_3 = List.of("ProcessSearchAgent", "MovementAgent", "PartiesAgent", "DecisionsAgent", "CourtAgent", "TimelineAgent", "ExternalEvidenceAgent", "JusReconciliationAgent");
 
     private final AnaliseJobService analiseJobService;
     private final SpecializedAnalysisOrchestrator orchestrator;
     private final ProcessoIndexService indexService;
     private final AnaliseEspecializadaPersistenceService persistenceService;
     private final RelatorioPdfService relatorioPdfService;
+    private final DataJudService dataJudService;
+    private final ExternalValidationTeam externalValidationTeam;
     private final Executor executor;
     private final Map<String, AnaliseEspecializadaJob> jobs = new ConcurrentHashMap<>();
 
     public AnaliseEspecializadaJobService(AnaliseJobService analiseJobService, SpecializedAnalysisOrchestrator orchestrator,
                                           ProcessoIndexService indexService, AnaliseEspecializadaPersistenceService persistenceService,
-                                          RelatorioPdfService relatorioPdfService, Executor legalAnalysisExecutor) {
+                                          RelatorioPdfService relatorioPdfService, DataJudService dataJudService,
+                                          ExternalValidationTeam externalValidationTeam, Executor legalAnalysisExecutor) {
         this.analiseJobService = analiseJobService; this.orchestrator = orchestrator; this.indexService = indexService;
-        this.persistenceService = persistenceService; this.relatorioPdfService = relatorioPdfService; this.executor = legalAnalysisExecutor;
+        this.persistenceService = persistenceService; this.relatorioPdfService = relatorioPdfService;
+        this.dataJudService = dataJudService; this.externalValidationTeam = externalValidationTeam; this.executor = legalAnalysisExecutor;
     }
 
     public OpcaoAnaliseEspecializadaDTO opcao(AnaliseJob analiseBase) {
         if (analiseBase.status() != AnaliseStatus.CONCLUIDO || analiseBase.resultado() == null)
             return OpcaoAnaliseEspecializadaDTO.indisponivel("A análise especializada fica disponível quando a análise base for concluída.");
         boolean pesquisaHabilitada = orchestrator.pesquisaJuridicaHabilitada();
-        String observacao = pesquisaHabilitada ? "Todos os resultados são rascunhos/pareceres de apoio e dependem de revisão do advogado."
-                : "Pesquisa jurídica desabilitada: sem fontes autorizadas configuradas, nenhuma legislação ou jurisprudência será citada. Os demais agentes continuam disponíveis.";
+        String observacao = pesquisaHabilitada ? "Equipe 2 será executada e, somente depois, a Equipe 3/DataJud fará a validação externa."
+                : "Pesquisa jurídica desabilitada. A Equipe 2 continuará disponível e a Equipe 3 será iniciada somente após sua conclusão.";
         return new OpcaoAnaliseEspecializadaDTO(true, "/api/v1/processos/analises/" + analiseBase.id() + "/especializada", AGENTES,
                 Arrays.asList(TipoRascunho.values()), pesquisaHabilitada, observacao);
     }
@@ -62,7 +71,7 @@ public class AnaliseEspecializadaJobService {
         AnaliseEspecializadaJob job = new AnaliseEspecializadaJob(id, analiseBaseId, analiseBase.nomeArquivo());
         jobs.put(id, job); persistenceService.criar(id, analiseBaseId, analiseBase.nomeArquivo()); persistirStatus(job);
         AnaliseEspecializadaRequest opcoes = request == null ? AnaliseEspecializadaRequest.padrao() : request;
-        log.info("[ESPECIALIZADA:{}] INICIADA | base={} | arquivo={} | agentes={}", id, analiseBaseId, analiseBase.nomeArquivo(), AGENTES.size());
+        log.info("[PROCESSO:{}][EQUIPE_2] INICIADA | job={} | arquivo={} | agentes={}", analiseBaseId, id, analiseBase.nomeArquivo(), AGENTES.size());
         executor.execute(() -> processar(job, analiseBase, opcoes));
         return AnaliseEspecializadaJobResponse.status(job);
     }
@@ -89,8 +98,10 @@ public class AnaliseEspecializadaJobService {
         }
         AnaliseEspecializadaStatus status;
         try { status = AnaliseEspecializadaStatus.valueOf(entity.getStatus()); } catch (IllegalArgumentException e) { status = AnaliseEspecializadaStatus.ERRO; }
+        String equipe = "EQUIPE_2";
+        if (!logs.isEmpty()) { Object valor = logs.get(logs.size() - 1).get("equipe"); if (valor != null) equipe = String.valueOf(valor); }
         return new AnaliseEspecializadaJobResponse(entity.getId(), entity.getAnaliseBaseId(), entity.getNomeArquivo(), status,
-                entity.getProgresso(), entity.getEtapa(), entity.getMensagem(), eta, entity.getCriadoEm(), entity.getAtualizadoEm(),
+                equipe, entity.getProgresso(), entity.getEtapa(), entity.getMensagem(), eta, entity.getCriadoEm(), entity.getAtualizadoEm(),
                 logs, entity.getRelatorioPdf() != null, resultado);
     }
 
@@ -104,27 +115,83 @@ public class AnaliseEspecializadaJobService {
         try {
             var resultado = orchestrator.analisar(analiseBase.id(), analiseBase.nomeArquivo(), analiseBase.textoExtraido(), analiseBase.resultado(), opcoes,
                     (status, progresso, etapa, mensagem) -> {
-                        log.info("[ESPECIALIZADA:{}] AGENTE/ETAPA | status={} | {}% | {} | {}", job.id(), status, progresso, etapa, mensagem);
+                        log.info("[PROCESSO:{}][EQUIPE_2] AGENTE/ETAPA | status={} | {}% | {} | {}", analiseBase.id(), status, progresso, etapa, mensagem);
                         job.atualizar(status, progresso, etapa, mensagem); persistirStatus(job);
                     });
-            try { indexService.indexar(analiseBase.id(), analiseBase.paginas(), analiseBase.resultado(), resultado); log.info("[ESPECIALIZADA:{}] RAG | índice atualizado com os oito agentes", job.id()); }
-            catch (Exception e) { log.warn("[ESPECIALIZADA:{}] RAG | falha ao reindexar: {}", job.id(), e.getMessage()); }
+            try { indexService.indexar(analiseBase.id(), analiseBase.paginas(), analiseBase.resultado(), resultado); log.info("[PROCESSO:{}][EQUIPE_2] RAG | índice atualizado com os oito agentes", analiseBase.id()); }
+            catch (Exception e) { log.warn("[PROCESSO:{}][EQUIPE_2] RAG | falha ao reindexar: {}", analiseBase.id(), e.getMessage()); }
 
-            job.atualizar(AnaliseEspecializadaStatus.PARECER_SENIOR, 98, "Gerando relatório", "Gerando o PDF final da análise dos oito agentes e salvando no PostgreSQL.");
+            log.info("[PROCESSO:{}][EQUIPE_2] CONCLUÍDA | iniciando Equipe 3 somente agora", analiseBase.id());
+            executarEquipe3(job, analiseBase);
+
+            job.atualizar(AnaliseEspecializadaStatus.PARECER_SENIOR, 98, "Equipe 3 — Gerando relatório", "Gerando o PDF final após a validação externa e salvando no PostgreSQL.");
             persistirStatus(job);
             byte[] relatorio = relatorioPdfService.gerarEspecializada(analiseBase.nomeArquivo(), analiseBase.id(), resultado);
             job.concluir(resultado);
             persistenceService.concluir(job.id(), resultado, relatorio, job.logs());
-            log.info("[ESPECIALIZADA:{}] CONCLUÍDA | PDF persistido=true | bytes={} | duração={}s", job.id(), relatorio.length, java.time.Duration.between(job.criadoEm(), Instant.now()).toSeconds());
+            log.info("[PROCESSO:{}][EQUIPE_3] CONCLUÍDA | PDF persistido=true | bytes={} | duração={}s", analiseBase.id(), relatorio.length, java.time.Duration.between(job.criadoEm(), Instant.now()).toSeconds());
         } catch (Exception e) {
-            log.error("[ESPECIALIZADA:{}] ERRO | etapa={} | progresso={} | {}", job.id(), job.etapa(), job.progresso(), e.getMessage(), e);
-            job.falhar(e.getMessage() == null ? "Erro inesperado durante a análise especializada." : e.getMessage());
+            log.error("[PROCESSO:{}][{}] ERRO | etapa={} | progresso={} | {}", analiseBase.id(), job.equipeAtual(), job.etapa(), job.progresso(), e.getMessage(), e);
+            job.falhar(e.getMessage() == null ? "Erro inesperado durante o processamento das equipes." : e.getMessage());
             persistenceService.falhar(job.id(), job.progresso(), job.etapa(), job.mensagem(), job.logs());
         }
     }
 
+    private void executarEquipe3(AnaliseEspecializadaJob job, AnaliseJob analiseBase) {
+        job.iniciarEquipe3(); persistirStatus(job);
+        String numeroProcesso = analiseBase.numeroProcesso();
+        if (numeroProcesso == null || numeroProcesso.isBlank() || "não identificado".equalsIgnoreCase(numeroProcesso)) {
+            log.warn("[PROCESSO:{}][EQUIPE_3_DATAJUD] IGNORADA | CNJ não identificado", analiseBase.id());
+            job.atualizarEquipe3(AnaliseEspecializadaStatus.PARECER_SENIOR, 100, "SYSTEM", 0, "SKIPPED", "CNJ não identificado. Validação externa não pode ser executada.", List.of("Equipe 1", "Equipe 2"), "Equipe 3 não executada.");
+            persistirStatus(job);
+            return;
+        }
+
+        job.atualizarEquipe3(AnaliseEspecializadaStatus.PARECER_SENIOR, 5, "ProcessSearchAgent", 1, "SEARCH_PROCESS", "Consultando o processo oficial no DataJud/CNJ.", List.of("Equipe 1", "Equipe 2"), "CNJ=" + numeroProcesso);
+        persistirStatus(job);
+        try {
+            DataJudInfo info = dataJudService.consultar(numeroProcesso);
+            log.info("[PROCESSO:{}][EQUIPE_3_DATAJUD] PROCESSO | status={} | encontrado={} | tribunal={} | movimentos={}", analiseBase.id(), info.status(), info.encontrado(), info.tribunal(), info.quantidadeMovimentos());
+            List<ExternalValidationResult> resultados = externalValidationTeam.executar(info, (agente, progresso) -> {
+                int numero = AGENTES_EQUIPE_3.indexOf(agente) + 1;
+                String acao = agente.equals("JusReconciliationAgent") ? "RECONCILING" : "VALIDATING_EXTERNAL_DATA";
+                job.atualizarEquipe3(AnaliseEspecializadaStatus.PARECER_SENIOR, progresso, agente, Math.max(1, numero), acao,
+                        descricaoEquipe3(agente, info), List.of("Equipe 1", "Equipe 2", "Equipe 3"), "Processo=" + numeroProcesso);
+                persistirStatus(job);
+                log.info("[PROCESSO:{}][EQUIPE_3_DATAJUD][AGENTE:{}] {}% | {}", analiseBase.id(), agente, progresso, descricaoEquipe3(agente, info));
+            });
+            for (ExternalValidationResult r : resultados) {
+                log.info("[PROCESSO:{}][EQUIPE_3_DATAJUD][RESULTADO:{}] status={} | {} | achados={}", analiseBase.id(), r.agent(), r.status(), r.summary(), r.findings().size());
+            }
+            job.atualizarEquipe3(AnaliseEspecializadaStatus.PARECER_SENIOR, 100, "JusReconciliationAgent", 8, "RECONCILING",
+                    "Reconciliação externa concluída. Confirmações, divergências e lacunas foram registradas nos logs.",
+                    List.of("Equipe 1", "Equipe 2", "sete agentes externos"), "Resultados externos=" + resultados.size());
+            persistirStatus(job);
+        } catch (Exception e) {
+            log.warn("[PROCESSO:{}][EQUIPE_3_DATAJUD] FALHA | a análise especializada continuará, mas a validação externa ficará marcada nos logs: {}", analiseBase.id(), e.getMessage());
+            job.atualizarEquipe3(AnaliseEspecializadaStatus.PARECER_SENIOR, 100, "SYSTEM", 0, "EXTERNAL_VALIDATION_UNAVAILABLE",
+                    "DataJud indisponível ou falhou. A Equipe 3 foi encerrada sem descartar os resultados das Equipes 1 e 2.",
+                    List.of("Equipe 1", "Equipe 2"), e.getMessage());
+            persistirStatus(job);
+        }
+    }
+
+    private String descricaoEquipe3(String agente, DataJudInfo info) {
+        return switch (agente) {
+            case "ProcessSearchAgent" -> "Confirmando a identificação oficial do processo.";
+            case "MovementAgent" -> "Normalizando movimentações e eventos oficiais.";
+            case "PartiesAgent" -> "Validando partes e polos disponíveis na fonte externa.";
+            case "DecisionsAgent" -> "Verificando decisões e atos relevantes disponíveis.";
+            case "CourtAgent" -> "Validando tribunal, órgão julgador, classe e grau.";
+            case "TimelineAgent" -> "Construindo a linha do tempo externa para confronto.";
+            case "ExternalEvidenceAgent" -> "Transformando dados externos em evidências auditáveis.";
+            case "JusReconciliationAgent" -> "Cruzando os achados externos e preparando a reconciliação.";
+            default -> "Processando validação externa.";
+        };
+    }
+
     private void persistirStatus(AnaliseEspecializadaJob job) {
         try { persistenceService.atualizar(job.id(), job.status().name(), job.progresso(), job.etapa(), job.mensagem(), job.logs()); }
-        catch (Exception e) { log.error("[ESPECIALIZADA:{}] PERSISTENCIA | falha ao salvar progresso: {}", job.id(), e.getMessage(), e); }
+        catch (Exception e) { log.error("[PROCESSO:{}][{}] PERSISTENCIA | falha ao salvar progresso: {}", job.analiseBaseId(), job.equipeAtual(), e.getMessage(), e); }
     }
 }
