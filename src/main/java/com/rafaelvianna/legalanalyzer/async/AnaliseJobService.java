@@ -1,8 +1,6 @@
 package com.rafaelvianna.legalanalyzer.async;
 
 import com.rafaelvianna.legalanalyzer.analysis.LegalAnalysisOrchestrator;
-import com.rafaelvianna.legalanalyzer.datajud.DataJudInfo;
-import com.rafaelvianna.legalanalyzer.datajud.DataJudService;
 import com.rafaelvianna.legalanalyzer.exception.PdfProcessingException;
 import com.rafaelvianna.legalanalyzer.persistence.ProcessoEntity;
 import com.rafaelvianna.legalanalyzer.persistence.ProcessoPersistenceService;
@@ -16,7 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
-import java.time.Instant;
+
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -25,15 +23,100 @@ import java.util.concurrent.Executor;
 
 @Service
 public class AnaliseJobService {
- private static final Logger log=LoggerFactory.getLogger(AnaliseJobService.class);
- private final PdfTextExtractionService pdfTextExtractionService; private final LegalAnalysisOrchestrator orchestrator; private final ProcessoIndexService indexService; private final DataJudService dataJudService; private final ProcessoPersistenceService persistenceService; private final RelatorioPdfService relatorioPdfService; private final Executor executor; private final AnaliseEspecializadaJobService especializadaService; private final Map<String,AnaliseJob> jobs=new ConcurrentHashMap<>();
- public AnaliseJobService(PdfTextExtractionService pdfTextExtractionService,LegalAnalysisOrchestrator orchestrator,ProcessoIndexService indexService,DataJudService dataJudService,ProcessoPersistenceService persistenceService,RelatorioPdfService relatorioPdfService,Executor legalAnalysisExecutor,@Lazy AnaliseEspecializadaJobService especializadaService){this.pdfTextExtractionService=pdfTextExtractionService;this.orchestrator=orchestrator;this.indexService=indexService;this.dataJudService=dataJudService;this.persistenceService=persistenceService;this.relatorioPdfService=relatorioPdfService;this.executor=legalAnalysisExecutor;this.especializadaService=especializadaService;}
- public AnaliseJobResponse iniciar(MultipartFile arquivo){String nome=arquivo.getOriginalFilename()==null?"processo.pdf":arquivo.getOriginalFilename();final byte[] conteudo;try{conteudo=arquivo.getBytes();}catch(Exception e){throw new PdfProcessingException("Não foi possível preparar o PDF para processamento: "+e.getMessage(),e);}String id=UUID.randomUUID().toString();AnaliseJob job=new AnaliseJob(id,nome);jobs.put(id,job);persistenceService.criar(id,nome,conteudo);log.info("[ANALISE:{}] UPLOAD RECEBIDO | arquivo={} | bytes={} | persistido=true | iniciando extração para localizar CNJ",id,nome,conteudo.length);executor.execute(()->processar(job,conteudo));return AnaliseJobResponse.status(job);}
- public AnaliseJobResponse consultar(String id){return AnaliseJobResponse.status(buscar(id));}
- public AnaliseJob buscar(String id){AnaliseJob job=jobs.get(id);if(job==null)throw new PdfProcessingException("Análise não encontrada: "+id);return job;}
- private void atualizar(AnaliseJob job,AnaliseStatus status,int progresso,String etapa,String mensagem){job.atualizar(status,progresso,etapa,mensagem);try{persistenceService.atualizar(job.id(),job.numeroProcesso(),ProcessoEntity.Status.valueOf(status.name()),progresso,etapa,mensagem);}catch(Exception e){log.error("[ANALISE:{}] PERSISTENCIA | falha ao salvar status={} | {}",job.id(),status,e.getMessage(),e);}}
- private void indexarComSeguranca(AnaliseJob job,AnaliseProcessoResponse resultado){try{indexService.indexar(job.id(),job.paginas(),resultado,null);}catch(Exception e){log.warn("[ANALISE:{}] RAG | falha ao indexar: {}",job.id(),e.getMessage());}}
- private void consultarDataJudEmParalelo(AnaliseJob job){job.dataJud(DataJudInfo.aguardando(job.numeroProcesso()));log.info("[ANALISE:{}] CNJ ENCONTRADO | {} | iniciando busca na API pública DataJud/CNJ",job.id(),job.numeroProcesso());executor.execute(()->{try{job.dataJud(new DataJudInfo(com.rafaelvianna.legalanalyzer.datajud.DataJudStatus.CONSULTANDO,job.numeroProcesso(),null,null,false,null,null,null,null,null,"Consultando a base pública do DataJud/CNJ.",Instant.now(),List.of()));log.info("[ANALISE:{}] DATAJUD | consultando processo CNJ={}",job.id(),job.numeroProcesso());DataJudInfo resultado=dataJudService.consultar(job.numeroProcesso());job.dataJud(resultado);log.info("[ANALISE:{}] DATAJUD | status={} | encontrado={} | tribunal={} | classe={} | orgao={} | movimentos={}",job.id(),resultado.status(),resultado.encontrado(),resultado.tribunal(),resultado.classeProcessual(),resultado.orgaoJulgador(),resultado.quantidadeMovimentos());}catch(Exception e){log.warn("[ANALISE:{}] DATAJUD | erro CNJ={}: {}",job.id(),job.numeroProcesso(),e.getMessage());}});}
- private void processar(AnaliseJob job,byte[] conteudo){try{atualizar(job,AnaliseStatus.EXTRAINDO_PDF,10,"Extraindo PDF","Lendo e normalizando o conteúdo do documento.");log.info("[ANALISE:{}] PDF | extração iniciada | arquivo={}",job.id(),job.nomeArquivo());List<PaginaExtraida> paginas=pdfTextExtractionService.extractPages(conteudo,job.nomeArquivo());String texto=pdfTextExtractionService.extractText(conteudo,job.nomeArquivo());job.paginas(paginas);job.textoExtraido(texto);job.numeroProcesso(ProcessoIndexService.numeroProcesso(paginas,texto));log.info("[ANALISE:{}] PDF | páginas={} | caracteres={} | CNJ identificado={}",job.id(),paginas.size(),texto==null?0:texto.length(),job.numeroProcesso());if(job.numeroProcesso()!=null&&!job.numeroProcesso().isBlank()&&!"não identificado".equalsIgnoreCase(job.numeroProcesso()))consultarDataJudEmParalelo(job);else{job.dataJud(DataJudInfo.numeroNaoIdentificado());log.info("[ANALISE:{}] DATAJUD | CNJ não identificado; consulta individual não será executada",job.id());}atualizar(job,AnaliseStatus.ANALISANDO_PARTES,35,"Analisando partes e fatos","Identificando partes, cronologia, pedidos, decisões, prazos e documentos.");log.info("[ANALISE:{}] AGENTE BASE | iniciando análise jurídica do conteúdo",job.id());var resultado=orchestrator.analisar(job.nomeArquivo(),texto,(status,progresso,etapa,mensagem)->{log.info("[ANALISE:{}] ETAPA | {} | {}% | {}",job.id(),etapa,progresso,mensagem);atualizar(job,status,progresso,etapa,mensagem);});atualizar(job,AnaliseStatus.GERANDO_RELATORIO,92,"Gerando relatório PDF","Montando o relatório final completo para exportação.");byte[] relatorio=relatorioPdfService.gerar(job.nomeArquivo(),job.numeroProcesso(),resultado);String relatorioNome=nomeRelatorio(job.nomeArquivo());log.info("[ANALISE:{}] PDF FINAL | gerado | nome={} | bytes={}",job.id(),relatorioNome,relatorio.length);persistenceService.salvarRelatorio(job.id(),relatorio);atualizar(job,AnaliseStatus.CONSOLIDANDO,95,"Indexando o caso","Montando o índice do processo para o briefing e o chat.");indexarComSeguranca(job,resultado);job.concluir(resultado);persistenceService.atualizar(job.id(),job.numeroProcesso(),ProcessoEntity.Status.CONCLUIDO,100,"Relatório pronto","Análise concluída. Análise especializada iniciada automaticamente em segundo plano.");log.info("[ANALISE:{}] CONCLUÍDO | iniciando automaticamente análise especializada",job.id());executor.execute(()->{try{especializadaService.iniciar(job.id(),null);log.info("[ANALISE:{}] ESPECIALIZADA | job criado automaticamente",job.id());}catch(Exception e){log.error("[ANALISE:{}] ESPECIALIZADA | não foi possível iniciar automaticamente: {}",job.id(),e.getMessage(),e);}}); }catch(Exception e){log.error("[ANALISE:{}] ERRO | arquivo={} | etapa={} | progresso={} | {}",job.id(),job.nomeArquivo(),job.etapa(),job.progresso(),e.getMessage(),e);job.falhar(e.getMessage()==null?"Erro inesperado durante a análise.":e.getMessage());try{persistenceService.atualizar(job.id(),job.numeroProcesso(),ProcessoEntity.Status.ERRO,job.progresso(),job.etapa(),job.mensagem());}catch(Exception persistencia){log.error("[ANALISE:{}] PERSISTENCIA | falha ao salvar erro: {}",job.id(),persistencia.getMessage(),persistencia);}}}
- private String nomeRelatorio(String nome){String base=nome==null?"processo":nome.replaceAll("(?i)\\.pdf$","");return base+"-relatorio.pdf";}
+    private static final Logger log = LoggerFactory.getLogger(AnaliseJobService.class);
+    private final PdfTextExtractionService pdfTextExtractionService;
+    private final LegalAnalysisOrchestrator orchestrator;
+    private final ProcessoIndexService indexService;
+    private final ProcessoPersistenceService persistenceService;
+    private final RelatorioPdfService relatorioPdfService;
+    private final Executor executor;
+    private final AnaliseEspecializadaJobService especializadaService;
+    private final Map<String, AnaliseJob> jobs = new ConcurrentHashMap<>();
+
+    public AnaliseJobService(PdfTextExtractionService pdfTextExtractionService, LegalAnalysisOrchestrator orchestrator,
+                             ProcessoIndexService indexService, ProcessoPersistenceService persistenceService,
+                             RelatorioPdfService relatorioPdfService, Executor legalAnalysisExecutor,
+                             @Lazy AnaliseEspecializadaJobService especializadaService) {
+        this.pdfTextExtractionService = pdfTextExtractionService;
+        this.orchestrator = orchestrator;
+        this.indexService = indexService;
+        this.persistenceService = persistenceService;
+        this.relatorioPdfService = relatorioPdfService;
+        this.executor = legalAnalysisExecutor;
+        this.especializadaService = especializadaService;
+    }
+
+    public AnaliseJobResponse iniciar(MultipartFile arquivo) {
+        String nome = arquivo.getOriginalFilename() == null ? "processo.pdf" : arquivo.getOriginalFilename();
+        final byte[] conteudo;
+        try { conteudo = arquivo.getBytes(); }
+        catch (Exception e) { throw new PdfProcessingException("Não foi possível preparar o PDF para processamento: " + e.getMessage(), e); }
+        String id = UUID.randomUUID().toString();
+        AnaliseJob job = new AnaliseJob(id, nome);
+        jobs.put(id, job);
+        persistenceService.criar(id, nome, conteudo);
+        log.info("[PROCESSO:{}][EQUIPE_1] RECEBIDO | arquivo={} | bytes={} | persistido=true", id, nome, conteudo.length);
+        executor.execute(() -> processar(job, conteudo));
+        return AnaliseJobResponse.status(job);
+    }
+
+    public AnaliseJobResponse consultar(String id) { return AnaliseJobResponse.status(buscar(id)); }
+    public AnaliseJob buscar(String id) {
+        AnaliseJob job = jobs.get(id);
+        if (job == null) throw new PdfProcessingException("Análise não encontrada: " + id);
+        return job;
+    }
+
+    private void atualizar(AnaliseJob job, AnaliseStatus status, int progresso, String etapa, String mensagem) {
+        job.atualizar(status, progresso, etapa, mensagem);
+        try { persistenceService.atualizar(job.id(), job.numeroProcesso(), ProcessoEntity.Status.valueOf(status.name()), progresso, etapa, mensagem); }
+        catch (Exception e) { log.error("[PROCESSO:{}][EQUIPE_1] PERSISTENCIA | status={} | {}", job.id(), status, e.getMessage(), e); }
+    }
+
+    private void indexarComSeguranca(AnaliseJob job, AnaliseProcessoResponse resultado) {
+        try { indexService.indexar(job.id(), job.paginas(), resultado, null); }
+        catch (Exception e) { log.warn("[PROCESSO:{}][EQUIPE_1] RAG | falha ao indexar: {}", job.id(), e.getMessage()); }
+    }
+
+    private void processar(AnaliseJob job, byte[] conteudo) {
+        try {
+            atualizar(job, AnaliseStatus.EXTRAINDO_PDF, 10, "Equipe 1 — Extraindo PDF", "Lendo e normalizando o conteúdo do documento.");
+            log.info("[PROCESSO:{}][EQUIPE_1] PDF | extração iniciada | arquivo={}", job.id(), job.nomeArquivo());
+            List<PaginaExtraida> paginas = pdfTextExtractionService.extractPages(conteudo, job.nomeArquivo());
+            String texto = pdfTextExtractionService.extractText(conteudo, job.nomeArquivo());
+            job.paginas(paginas); job.textoExtraido(texto);
+            job.numeroProcesso(ProcessoIndexService.numeroProcesso(paginas, texto));
+            log.info("[PROCESSO:{}][EQUIPE_1] PDF | páginas={} | caracteres={} | CNJ={}", job.id(), paginas.size(), texto == null ? 0 : texto.length(), job.numeroProcesso());
+
+            atualizar(job, AnaliseStatus.ANALISANDO_PARTES, 35, "Equipe 1 — Analisando documento", "Identificando partes, cronologia, pedidos, decisões, prazos e documentos.");
+            log.info("[PROCESSO:{}][EQUIPE_1] AGENTES | análise documental iniciada", job.id());
+            var resultado = orchestrator.analisar(job.nomeArquivo(), texto, (status, progresso, etapa, mensagem) -> {
+                log.info("[PROCESSO:{}][EQUIPE_1] ETAPA | {} | {}% | {}", job.id(), etapa, progresso, mensagem);
+                atualizar(job, status, progresso, "Equipe 1 — " + etapa, mensagem);
+            });
+
+            atualizar(job, AnaliseStatus.GERANDO_RELATORIO, 92, "Equipe 1 — Gerando relatório", "Montando o relatório final da análise documental.");
+            byte[] relatorio = relatorioPdfService.gerar(job.nomeArquivo(), job.numeroProcesso(), resultado);
+            persistenceService.salvarRelatorio(job.id(), relatorio);
+            atualizar(job, AnaliseStatus.CONSOLIDANDO, 95, "Equipe 1 — Indexando o caso", "Montando o índice do processo para as equipes seguintes.");
+            indexarComSeguranca(job, resultado);
+            job.concluir(resultado);
+            persistenceService.atualizar(job.id(), job.numeroProcesso(), ProcessoEntity.Status.CONCLUIDO, 100, "Equipe 1 concluída", "Análise documental concluída. Equipe 2 será iniciada em seguida.");
+            log.info("[PROCESSO:{}][EQUIPE_1] CONCLUÍDA | relatório persistido=true | bytes={}", job.id(), relatorio.length);
+
+            executor.execute(() -> {
+                try {
+                    especializadaService.iniciar(job.id(), null);
+                    log.info("[PROCESSO:{}][EQUIPE_2] JOB CRIADO | início sequencial após Equipe 1", job.id());
+                } catch (Exception e) {
+                    log.error("[PROCESSO:{}][EQUIPE_2] não foi possível iniciar: {}", job.id(), e.getMessage(), e);
+                }
+            });
+        } catch (Exception e) {
+            log.error("[PROCESSO:{}][EQUIPE_1] ERRO | etapa={} | progresso={} | {}", job.id(), job.etapa(), job.progresso(), e.getMessage(), e);
+            job.falhar(e.getMessage() == null ? "Erro inesperado durante a análise." : e.getMessage());
+            try { persistenceService.atualizar(job.id(), job.numeroProcesso(), ProcessoEntity.Status.ERRO, job.progresso(), job.etapa(), job.mensagem()); }
+            catch (Exception persistencia) { log.error("[PROCESSO:{}] PERSISTENCIA | falha ao salvar erro: {}", job.id(), persistencia.getMessage(), persistencia); }
+        }
+    }
 }
