@@ -9,9 +9,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Estado persistível da análise especializada, com telemetria detalhada dos agentes. */
+/** Estado persistível da análise longa, com equipe atual, telemetria e estimativa. */
 public final class AnaliseEspecializadaJob {
-    private static final int TOTAL_AGENTES = 8;
+    private static final int TOTAL_AGENTES_EQUIPE_2 = 8;
+    private static final int TOTAL_AGENTES_EQUIPE_3 = 8;
     private final String id;
     private final String analiseBaseId;
     private final String nomeArquivo;
@@ -22,6 +23,7 @@ public final class AnaliseEspecializadaJob {
     private volatile String etapa;
     private volatile String mensagem;
     private volatile long estimativaRestanteSegundos;
+    private volatile String equipeAtual = "EQUIPE_2";
     private volatile AnaliseEspecializadaResponse resultado;
     private final List<Map<String, Object>> logs = new ArrayList<>();
 
@@ -29,8 +31,18 @@ public final class AnaliseEspecializadaJob {
         this.id = id; this.analiseBaseId = analiseBaseId; this.nomeArquivo = nomeArquivo;
         this.criadoEm = Instant.now(); this.atualizadoEm = criadoEm;
         this.status = AnaliseEspecializadaStatus.RECEBIDO; this.progresso = 0;
-        this.etapa = "Recebido"; this.mensagem = "Análise especializada na fila de processamento.";
-        adicionarLog("SYSTEM", 0, "QUEUE", "RECEBIDO", "Fila de análise criada.", List.of("Análise Base"), "");
+        this.etapa = "Equipe 2 — Recebido"; this.mensagem = "Equipe 2 na fila de processamento.";
+        adicionarLog("SYSTEM", 0, "QUEUE", "RECEBIDO", "Equipe 2 criada após a conclusão da Equipe 1.", List.of("Equipe 1"), "");
+    }
+
+    public synchronized void iniciarEquipe3() {
+        this.equipeAtual = "EQUIPE_3_DATAJUD";
+        this.progresso = 0;
+        this.estimativaRestanteSegundos = 0;
+        this.etapa = "Equipe 3 — Preparando validação externa";
+        this.mensagem = "Equipe 2 concluída. A barra foi reiniciada para a validação externa DataJud/Jus.";
+        this.atualizadoEm = Instant.now();
+        adicionarLog("SYSTEM", 0, "TEAM_START", "INICIANDO", this.mensagem, List.of("Equipe 1", "Equipe 2"), "Equipe 3 iniciada somente após a Equipe 2.");
     }
 
     public synchronized void atualizar(AnaliseEspecializadaStatus status, int progresso, String etapa, String mensagem) {
@@ -41,11 +53,19 @@ public final class AnaliseEspecializadaJob {
         atualizarInterno(status, progresso, etapa, mensagem, agente, numero, acao, contexto, "");
     }
 
-    public synchronized void atualizarDetalhado(AnaliseEspecializadaStatus status, int progresso, String agente,
-                                                   int agenteNumero, String acao, String mensagem,
-                                                   List<String> contextoRecebido, String resultadoParcial) {
-        atualizarInterno(status, progresso, agente + " — " + acao, mensagem, agente, agenteNumero, acao, contextoRecebido, resultadoParcial);
+    public synchronized void atualizarEquipe3(AnaliseEspecializadaStatus status, int progresso, String agente, int agenteNumero,
+                                               String acao, String mensagem, List<String> contexto, String resultadoParcial) {
+        this.equipeAtual = "EQUIPE_3_DATAJUD";
+        atualizarInterno(status, progresso, "Equipe 3 — " + agente + " — " + acao, mensagem, agente, agenteNumero, acao, contexto, resultadoParcial);
     }
+
+    public synchronized void atualizarDetalhado(AnaliseEspecializadaStatus status, int progresso, String agente,
+                                                  int agenteNumero, String acao, String mensagem,
+                                                  List<String> contextoRecebido, String resultadoParcial) {
+        atualizarInterno(status, progresso, etapaComEquipe(agente + " — " + acao), mensagem, agente, agenteNumero, acao, contextoRecebido, resultadoParcial);
+    }
+
+    private String etapaComEquipe(String etapa) { return "Equipe 2 — " + etapa; }
 
     private void atualizarInterno(AnaliseEspecializadaStatus status, int progresso, String etapa, String mensagem,
                                   String agente, int agenteNumero, String acao, List<String> contextoRecebido,
@@ -62,17 +82,19 @@ public final class AnaliseEspecializadaJob {
 
     public void concluir(AnaliseEspecializadaResponse resultado) {
         this.resultado = resultado;
-        atualizar(AnaliseEspecializadaStatus.CONCLUIDO, 100, "Senior Lawyer Agent — Relatório finalizado",
-                "Todos os oito agentes concluíram suas etapas. Relatório consolidado e pronto para revisão do advogado.");
+        atualizar(AnaliseEspecializadaStatus.CONCLUIDO, 100, "Equipe 3 — Validação finalizada",
+                "Equipes 1, 2 e 3 concluíram o processamento. Relatório consolidado e pronto para revisão.");
     }
 
-    public void falhar(String mensagem) { atualizar(AnaliseEspecializadaStatus.ERRO, progresso, "Falha no processamento", mensagem); }
+    public void falhar(String mensagem) { atualizar(AnaliseEspecializadaStatus.ERRO, progresso, equipeAtual + " — Falha no processamento", mensagem); }
 
     private void adicionarLog(String agente, int agenteNumero, String acao, String status, String mensagem,
                               List<String> contextoRecebido, String resultadoParcial) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("timestamp", Instant.now().toString());
-        item.put("agente", agente); item.put("agenteNumero", agenteNumero); item.put("totalAgentes", TOTAL_AGENTES);
+        item.put("equipe", equipeAtual);
+        item.put("agente", agente); item.put("agenteNumero", agenteNumero);
+        item.put("totalAgentes", equipeAtual.equals("EQUIPE_3_DATAJUD") ? TOTAL_AGENTES_EQUIPE_3 : TOTAL_AGENTES_EQUIPE_2);
         item.put("status", status); item.put("progresso", progresso); item.put("acao", acao); item.put("etapa", etapa);
         item.put("mensagem", mensagem); item.put("contextoRecebido", contextoRecebido == null ? List.of() : List.copyOf(contextoRecebido));
         item.put("resultadoParcial", resultadoParcial == null ? "" : resultadoParcial);
@@ -82,17 +104,14 @@ public final class AnaliseEspecializadaJob {
 
     private String identificarAgente(String etapa, String mensagem) {
         String texto = (etapa + " " + mensagem);
-        for (String agente : List.of("Document Agent", "Process Agent", "Contract Agent", "Deadline Agent", "Evidence Agent", "Legal Research Agent", "Drafting Agent", "Senior Lawyer Agent")) {
-            if (texto.contains(agente)) return agente;
-        }
+        for (String agente : List.of("Document Agent", "Process Agent", "Contract Agent", "Deadline Agent", "Evidence Agent", "Legal Research Agent", "Drafting Agent", "Senior Lawyer Agent")) if (texto.contains(agente)) return agente;
         return "SYSTEM";
     }
 
     private int numeroAgente(String agente) {
         return switch (agente) {
-            case "Document Agent" -> 1; case "Process Agent" -> 2; case "Contract Agent" -> 3;
-            case "Deadline Agent" -> 4; case "Evidence Agent" -> 5; case "Legal Research Agent" -> 6;
-            case "Drafting Agent" -> 7; case "Senior Lawyer Agent" -> 8; default -> 0;
+            case "Document Agent" -> 1; case "Process Agent" -> 2; case "Contract Agent" -> 3; case "Deadline Agent" -> 4;
+            case "Evidence Agent" -> 5; case "Legal Research Agent" -> 6; case "Drafting Agent" -> 7; case "Senior Lawyer Agent" -> 8; default -> 0;
         };
     }
 
@@ -110,8 +129,7 @@ public final class AnaliseEspecializadaJob {
     }
 
     private List<String> contextoDoAgente(int numero) {
-        List<String> contexto = new ArrayList<>();
-        contexto.add("Análise Base");
+        List<String> contexto = new ArrayList<>(); contexto.add("Equipe 1 — Análise Base");
         String[] nomes = {"Document Agent", "Process Agent", "Contract Agent", "Deadline Agent", "Evidence Agent", "Legal Research Agent", "Drafting Agent"};
         for (int i = 0; i < Math.min(numero - 1, nomes.length); i++) contexto.add(nomes[i]);
         return contexto;
@@ -122,6 +140,7 @@ public final class AnaliseEspecializadaJob {
     public Instant atualizadoEm() { return atualizadoEm; } public AnaliseEspecializadaStatus status() { return status; }
     public int progresso() { return progresso; } public String etapa() { return etapa; } public String mensagem() { return mensagem; }
     public long estimativaRestanteSegundos() { return estimativaRestanteSegundos; }
+    public String equipeAtual() { return equipeAtual; }
     public AnaliseEspecializadaResponse resultado() { return resultado; }
     public synchronized List<Map<String, Object>> logs() { return List.copyOf(logs); }
 }
