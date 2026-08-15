@@ -27,7 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
-/** Orquestra a Equipe 2 e, somente depois de sua conclusão, a Equipe 3/DataJud. */
+/** Orquestra a Equipe 2 e, somente depois da geração do PDF da Equipe 2, a Equipe 3/DataJud. */
 @Service
 public class AnaliseEspecializadaJobService {
     private static final Logger log = LoggerFactory.getLogger(AnaliseEspecializadaJobService.class);
@@ -57,8 +57,8 @@ public class AnaliseEspecializadaJobService {
         if (analiseBase.status() != AnaliseStatus.CONCLUIDO || analiseBase.resultado() == null)
             return OpcaoAnaliseEspecializadaDTO.indisponivel("A análise especializada fica disponível quando a análise base for concluída.");
         boolean pesquisaHabilitada = orchestrator.pesquisaJuridicaHabilitada();
-        String observacao = pesquisaHabilitada ? "Equipe 2 será executada e, somente depois, a Equipe 3/DataJud fará a validação externa."
-                : "Pesquisa jurídica desabilitada. A Equipe 2 continuará disponível e a Equipe 3 será iniciada somente após sua conclusão.";
+        String observacao = pesquisaHabilitada ? "Equipe 2 será executada, seu PDF será gerado e somente depois a Equipe 3/DataJud fará a validação externa."
+                : "Pesquisa jurídica desabilitada. A Equipe 2 continuará disponível, seu PDF será gerado e a Equipe 3 será iniciada somente após sua conclusão.";
         return new OpcaoAnaliseEspecializadaDTO(true, "/api/v1/processos/analises/" + analiseBase.id() + "/especializada", AGENTES,
                 Arrays.asList(TipoRascunho.values()), pesquisaHabilitada, observacao);
     }
@@ -121,15 +121,24 @@ public class AnaliseEspecializadaJobService {
             try { indexService.indexar(analiseBase.id(), analiseBase.paginas(), analiseBase.resultado(), resultado); log.info("[PROCESSO:{}][EQUIPE_2] RAG | índice atualizado com os oito agentes", analiseBase.id()); }
             catch (Exception e) { log.warn("[PROCESSO:{}][EQUIPE_2] RAG | falha ao reindexar: {}", analiseBase.id(), e.getMessage()); }
 
-            log.info("[PROCESSO:{}][EQUIPE_2] CONCLUÍDA | iniciando Equipe 3 somente agora", analiseBase.id());
+            // Fase 1: a Equipe 2 precisa terminar inclusive a geração do seu PDF antes de qualquer consulta DataJud.
+            job.atualizar(AnaliseEspecializadaStatus.PARECER_SENIOR, 96, "Equipe 2 — Gerando PDF", "Gerando o relatório PDF da Equipe 2. A Equipe 3 aguardará até o PDF estar completamente gerado.");
+            persistirStatus(job);
+            log.info("[PROCESSO:{}][EQUIPE_2] GERANDO_PDF | Equipe 3 bloqueada até o término da geração", analiseBase.id());
+            byte[] pdfEquipe2 = relatorioPdfService.gerarEspecializada(analiseBase.nomeArquivo(), analiseBase.id(), resultado);
+            if (pdfEquipe2 == null || pdfEquipe2.length == 0) throw new PdfProcessingException("O PDF da Equipe 2 não foi gerado; a Equipe 3 não será iniciada.");
+            log.info("[PROCESSO:{}][EQUIPE_2] PDF_GERADO | bytes={} | Equipe 3 liberada", analiseBase.id(), pdfEquipe2.length);
+
+            // Fase 2: somente agora a Equipe 3/DataJud começa do zero.
+            log.info("[PROCESSO:{}][EQUIPE_2] CONCLUÍDA | PDF pronto | iniciando Equipe 3", analiseBase.id());
             executarEquipe3(job, analiseBase);
 
-            job.atualizar(AnaliseEspecializadaStatus.PARECER_SENIOR, 98, "Equipe 3 — Gerando relatório", "Gerando o PDF final após a validação externa e salvando no PostgreSQL.");
+            job.atualizar(AnaliseEspecializadaStatus.PARECER_SENIOR, 98, "Equipe 3 — Gerando relatório final", "Gerando o PDF final após a validação externa e salvando no PostgreSQL.");
             persistirStatus(job);
-            byte[] relatorio = relatorioPdfService.gerarEspecializada(analiseBase.nomeArquivo(), analiseBase.id(), resultado);
+            byte[] relatorioFinal = relatorioPdfService.gerarEspecializada(analiseBase.nomeArquivo(), analiseBase.id(), resultado);
             job.concluir(resultado);
-            persistenceService.concluir(job.id(), resultado, relatorio, job.logs());
-            log.info("[PROCESSO:{}][EQUIPE_3] CONCLUÍDA | PDF persistido=true | bytes={} | duração={}s", analiseBase.id(), relatorio.length, java.time.Duration.between(job.criadoEm(), Instant.now()).toSeconds());
+            persistenceService.concluir(job.id(), resultado, relatorioFinal, job.logs());
+            log.info("[PROCESSO:{}][EQUIPE_3] CONCLUÍDA | PDF final persistido=true | bytes={} | duração={}s", analiseBase.id(), relatorioFinal.length, java.time.Duration.between(job.criadoEm(), Instant.now()).toSeconds());
         } catch (Exception e) {
             log.error("[PROCESSO:{}][{}] ERRO | etapa={} | progresso={} | {}", analiseBase.id(), job.equipeAtual(), job.etapa(), job.progresso(), e.getMessage(), e);
             job.falhar(e.getMessage() == null ? "Erro inesperado durante o processamento das equipes." : e.getMessage());
@@ -141,36 +150,38 @@ public class AnaliseEspecializadaJobService {
         job.iniciarEquipe3(); persistirStatus(job);
         String numeroProcesso = analiseBase.numeroProcesso();
         if (numeroProcesso == null || numeroProcesso.isBlank() || "não identificado".equalsIgnoreCase(numeroProcesso)) {
-            log.warn("[PROCESSO:{}][EQUIPE_3_DATAJUD] IGNORADA | CNJ não identificado", analiseBase.id());
-            job.atualizarEquipe3(AnaliseEspecializadaStatus.PARECER_SENIOR, 100, "SYSTEM", 0, "SKIPPED", "CNJ não identificado. Validação externa não pode ser executada.", List.of("Equipe 1", "Equipe 2"), "Equipe 3 não executada.");
+            log.warn("[PROCESSO:{}][EQUIPE_3_DATAJUD] NÃO EXECUTADA | CNJ não identificado | Equipe 2 já possui PDF concluído", analiseBase.id());
+            job.atualizarEquipe3(AnaliseEspecializadaStatus.PARECER_SENIOR, 100, "SYSTEM", 0, "INSUFICIENTE_DADOS", "Informações insuficientes: não foi identificado um número CNJ no documento. A Equipe 3 não possui uma chave para consultar o DataJud; as Equipes 1 e 2 permanecem válidas.", List.of("Equipe 1", "Equipe 2"), "Fonte não consultada: DataJud/CNJ");
             persistirStatus(job);
             return;
         }
 
-        job.atualizarEquipe3(AnaliseEspecializadaStatus.PARECER_SENIOR, 5, "ProcessSearchAgent", 1, "SEARCH_PROCESS", "Consultando o processo oficial no DataJud/CNJ.", List.of("Equipe 1", "Equipe 2"), "CNJ=" + numeroProcesso);
+        job.atualizarEquipe3(AnaliseEspecializadaStatus.PARECER_SENIOR, 5, "ProcessSearchAgent", 1, "SEARCH_PROCESS", "Consultando o processo oficial no DataJud/CNJ. Os demais agentes aguardarão o resultado desta consulta.", List.of("Equipe 1", "Equipe 2"), "CNJ=" + numeroProcesso);
         persistirStatus(job);
         try {
             DataJudInfo info = dataJudService.consultar(numeroProcesso);
-            log.info("[PROCESSO:{}][EQUIPE_3_DATAJUD] PROCESSO | status={} | encontrado={} | tribunal={} | movimentos={}", analiseBase.id(), info.status(), info.encontrado(), info.tribunal(), info.quantidadeMovimentos());
+            String disponibilidade = info.encontrado() ? "Processo localizado na fonte externa." : "Informações insuficientes: processo não localizado na fonte externa DataJud/CNJ. Agentes dependentes não irão inferir dados ausentes.";
+            log.info("[PROCESSO:{}][EQUIPE_3_DATAJUD] PROCESSO | status={} | encontrado={} | tribunal={} | movimentos={} | mensagem={}", analiseBase.id(), info.status(), info.encontrado(), info.tribunal(), info.quantidadeMovimentos(), disponibilidade);
             List<ExternalValidationResult> resultados = externalValidationTeam.executar(info, (agente, progresso) -> {
                 int numero = AGENTES_EQUIPE_3.indexOf(agente) + 1;
                 String acao = agente.equals("JusReconciliationAgent") ? "RECONCILING" : "VALIDATING_EXTERNAL_DATA";
+                String descricao = info.encontrado() ? descricaoEquipe3(agente, info) : "Informações insuficientes: DataJud não localizou o processo; este agente registrará a limitação sem interromper a análise.";
                 job.atualizarEquipe3(AnaliseEspecializadaStatus.PARECER_SENIOR, progresso, agente, Math.max(1, numero), acao,
-                        descricaoEquipe3(agente, info), List.of("Equipe 1", "Equipe 2", "Equipe 3"), "Processo=" + numeroProcesso);
+                        descricao, List.of("Equipe 1", "Equipe 2", "Equipe 3"), "Processo=" + numeroProcesso + " | DataJud=" + info.status());
                 persistirStatus(job);
-                log.info("[PROCESSO:{}][EQUIPE_3_DATAJUD][AGENTE:{}] {}% | {}", analiseBase.id(), agente, progresso, descricaoEquipe3(agente, info));
+                log.info("[PROCESSO:{}][EQUIPE_3_DATAJUD][AGENTE:{}] {}% | statusDataJud={} | {}", analiseBase.id(), agente, progresso, info.status(), descricao);
             });
             for (ExternalValidationResult r : resultados) {
                 log.info("[PROCESSO:{}][EQUIPE_3_DATAJUD][RESULTADO:{}] status={} | {} | achados={}", analiseBase.id(), r.agent(), r.status(), r.summary(), r.findings().size());
             }
             job.atualizarEquipe3(AnaliseEspecializadaStatus.PARECER_SENIOR, 100, "JusReconciliationAgent", 8, "RECONCILING",
-                    "Reconciliação externa concluída. Confirmações, divergências e lacunas foram registradas nos logs.",
-                    List.of("Equipe 1", "Equipe 2", "sete agentes externos"), "Resultados externos=" + resultados.size());
+                    info.encontrado() ? "Reconciliação externa concluída. Confirmações, divergências e lacunas foram registradas." : "Reconciliação concluída com informações insuficientes: o processo não foi localizado no DataJud/CNJ. As limitações foram registradas para os agentes dependentes e no relatório.",
+                    List.of("Equipe 1", "Equipe 2", "Equipe 3"), "DataJud=" + info.status() + " | Resultados externos=" + resultados.size());
             persistirStatus(job);
         } catch (Exception e) {
-            log.warn("[PROCESSO:{}][EQUIPE_3_DATAJUD] FALHA | a análise especializada continuará, mas a validação externa ficará marcada nos logs: {}", analiseBase.id(), e.getMessage());
+            log.warn("[PROCESSO:{}][EQUIPE_3_DATAJUD] FALHA | validação externa marcada como indisponível; análise continuará | {}", analiseBase.id(), e.getMessage());
             job.atualizarEquipe3(AnaliseEspecializadaStatus.PARECER_SENIOR, 100, "SYSTEM", 0, "EXTERNAL_VALIDATION_UNAVAILABLE",
-                    "DataJud indisponível ou falhou. A Equipe 3 foi encerrada sem descartar os resultados das Equipes 1 e 2.",
+                    "Informações insuficientes: o DataJud não pôde ser consultado. A Equipe 3 foi encerrada sem descartar os resultados das Equipes 1 e 2.",
                     List.of("Equipe 1", "Equipe 2"), e.getMessage());
             persistirStatus(job);
         }
