@@ -6,12 +6,13 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
-/** Status, telemetria e resultado (quando pronto) de uma análise especializada. */
+/** Status, equipe atual, telemetria e resultado de uma análise especializada longa. */
 public record AnaliseEspecializadaJobResponse(
         String id,
         String analiseBaseId,
         String nomeArquivo,
         AnaliseEspecializadaStatus status,
+        String equipeAtual,
         int progresso,
         String etapa,
         String mensagem,
@@ -24,7 +25,7 @@ public record AnaliseEspecializadaJobResponse(
 ) {
     public static AnaliseEspecializadaJobResponse status(AnaliseEspecializadaJob job) {
         return new AnaliseEspecializadaJobResponse(
-                job.id(), job.analiseBaseId(), job.nomeArquivo(), job.status(), job.progresso(),
+                job.id(), job.analiseBaseId(), job.nomeArquivo(), job.status(), job.equipeAtual(), job.progresso(),
                 job.etapa(), job.mensagem(), job.estimativaRestanteSegundos(), job.criadoEm(), job.atualizadoEm(),
                 job.logs(), job.resultado() != null, job.resultado());
     }
