@@ -8,15 +8,37 @@ O Legal Analyzer é organizado em equipes de agentes especializados. Cada equipe
 PROCESSO
    |
    +-- EQUIPE 1: Análise documental ........ 7 agentes
-   |
+   |       |
+   |       v
    +-- EQUIPE 2: Análise jurídica .......... 8 agentes
-   |
+   |       |
+   |       v
    +-- EQUIPE 3: Inteligência externa ...... 8 agentes
+   |       |
+   |       v
+   +-- RELATÓRIO FINAL / DOWNLOAD
    |
    +-- EQUIPE 4: Inteligência jurídica ..... planejada
-   |
-   +-- Reconciliação / Senior Lawyer
 ```
+
+As três primeiras equipes são executadas **em sequência**, para controlar consumo de CPU, memória e chamadas externas. A Equipe 3 somente começa depois que a Equipe 2 termina.
+
+## Experiência de progresso
+
+A barra de progresso representa a equipe atualmente em execução. Ao trocar de equipe, a barra volta para 0%.
+
+```text
+Equipe 1 — Analisando
+████████████████████ 100%
+
+Equipe 2 — Analisando
+████████████████████ 100%
+
+Equipe 3 — Validando DataJud/Jus
+████████████████████ 100%
+```
+
+A Central de Processos também exibe os logs com a equipe, agente, etapa, progresso, contexto e estimativa.
 
 ## Equipe 1 — Análise Base / Documental
 
@@ -45,13 +67,13 @@ PROCESSO
 7. `DraftingAgent` — preparação de rascunhos e conclusões jurídicas.
 8. `SeniorLawyerAgent` — revisão e consolidação das conclusões da equipe.
 
-A equipe 2 é iniciada automaticamente após a análise base e recebe o contexto produzido anteriormente.
+A Equipe 2 começa automaticamente após a Equipe 1. Os agentes recebem o resultado da análise base e os agentes posteriores recebem relatórios anteriores da própria equipe.
 
 ## Equipe 3 — Inteligência Externa / Validação Processual
 
 **Pergunta:** o que as fontes processuais oficiais confirmam, complementam ou contradizem no que já foi analisado?
 
-A equipe 3 será especializada no consumo de fontes oficiais, inicialmente a integração DataJud/Jus já existente na aplicação. Cada agente terá um domínio específico para evitar duplicidade e permitir rastreabilidade.
+A Equipe 3 começa **somente depois da conclusão da Equipe 2**. Ela consome uma consulta DataJud por processo e distribui o resultado aos seus oito agentes.
 
 ### Agentes
 
@@ -62,33 +84,39 @@ A equipe 3 será especializada no consumo de fontes oficiais, inicialmente a int
 5. `CourtAgent` — valida tribunal, órgão julgador, grau, classe e dados de competência disponíveis.
 6. `TimelineAgent` — reconcilia a linha do tempo documental com a linha do tempo oficial externa.
 7. `ExternalEvidenceAgent` — identifica fatos externos que confirmam ou contradizem evidências e conclusões das equipes 1 e 2.
-8. `JusReconciliationAgent` — reunião final da equipe; consolida confirmações, conflitos, lacunas e divergências para consumo jurídico posterior.
+8. `JusReconciliationAgent` — reunião final da equipe; consolida confirmações, conflitos, lacunas e divergências.
 
 ### Princípio
 
 ```text
-Resultados Equipes 1 e 2 + Dados oficiais externos
-                         |
-                    normalização
-                         |
-                      comparação
-                  /       |       \
-             confirmado conflito  lacuna
-                  \       |       /
-                   JusReconciliation
-                         |
-                  Relatório externo
+Equipe 1 + Equipe 2
+        |
+        +---- contexto produzido
+        |
+        v
+   consulta DataJud
+        |
+        v
+   7 especialistas
+        |
+        v
+JusReconciliationAgent
+        |
+        +-- confirmado
+        +-- conflito
+        +-- informação nova
+        +-- lacuna
 ```
 
-A equipe 3 não deve repetir a análise do PDF. Ela atua como camada independente de validação factual/processual.
+A Equipe 3 não repete a análise do PDF. Ela funciona como uma camada independente de validação factual/processual.
 
 ### Rastreabilidade
 
-Cada consulta deve registrar, quando disponível: processo, fonte, endpoint, tribunal, data/hora, parâmetros sem segredos, status HTTP, referência ao resultado bruto, dados normalizados, agente responsável, duração, erro e evidência interna que motivou a consulta.
+Cada etapa registra, quando disponível: processo, fonte, endpoint, tribunal, data/hora, status, agente, duração, erro e resultado. A chave DataJud nunca aparece nos logs.
 
 ### Integração existente
 
-A aplicação já possui `DataJudService`, que resolve o tribunal pelo número CNJ, consulta o endpoint público correspondente e extrai classe, órgão julgador, grau e movimentações. A Equipe 3 deve reutilizar essa camada em vez de duplicar autenticação, resolução de tribunal e transporte HTTP.
+A aplicação possui `DataJudService`, que resolve o tribunal pelo número CNJ, consulta o endpoint público correspondente e extrai classe, órgão julgador, grau e movimentações. A Equipe 3 reutiliza essa camada em vez de duplicar autenticação, resolução de tribunal e transporte HTTP.
 
 ## Equipe 4 — Inteligência Jurídica / Jurisprudência
 
@@ -102,9 +130,10 @@ Será definida depois da Equipe 3 para separar validação factual/processual de
 
 1. Responsabilidade única e observável por agente.
 2. Agentes posteriores recebem contexto relevante dos anteriores.
-3. Consultas externas são rastreáveis e persistidas.
-4. Falha externa não apaga resultados já produzidos.
-5. Resultados indicam origem e confiança quando possível.
+3. Equipes longas são executadas sequencialmente para controlar carga.
+4. Consultas externas são rastreáveis e persistidas.
+5. Falha externa não apaga resultados já produzidos.
 6. Divergências são preservadas, não escondidas.
 7. Processo, equipe, agente, etapa, progresso e logs são observáveis na Central de Processos.
 8. Relatórios são persistidos para download posterior.
+9. Fechar o navegador não interrompe o processamento do backend.
