@@ -1,12 +1,15 @@
 package com.rafaelvianna.legalanalyzer.web.dto;
 
-import com.rafaelvianna.legalanalyzer.analysis.external.ExternalValidationTeam;
-
 import java.util.List;
 
 /**
- * Resposta final da API, agregando os resultados da análise documental e da
- * validação processual externa da Equipe 3.
+ * Resposta final da análise documental da Equipe 1 (extração, consolidação,
+ * resumo, inconsistências, evidências e relatório executivo).
+ *
+ * A validação processual oficial (DataJud/Equipe 3) não faz parte desta
+ * resposta: ela roda como etapa separada e opcional, orquestrada por
+ * AnaliseEspecializadaJobService, para não acoplar a análise documental a uma
+ * fonte externa que pode estar indisponível ou não ter o processo indexado.
  */
 public record AnaliseProcessoResponse(
         MetadataDTO metadata,
@@ -20,7 +23,6 @@ public record AnaliseProcessoResponse(
         List<InconsistenciaDTO> inconsistencias,
         List<GrupoEvidenciaDTO> gruposEvidencia,
         List<String> perguntasInvestigacao,
-        RelatorioExecutivoDTO relatorioExecutivo,
-        ExternalValidationTeam.ExternalValidationResult validacaoExterna
+        RelatorioExecutivoDTO relatorioExecutivo
 ) {
 }

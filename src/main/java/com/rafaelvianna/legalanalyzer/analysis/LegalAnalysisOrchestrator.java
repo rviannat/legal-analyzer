@@ -7,7 +7,6 @@ import com.rafaelvianna.legalanalyzer.analysis.agents.InconsistenciaAgent;
 import com.rafaelvianna.legalanalyzer.analysis.agents.PerguntasAgent;
 import com.rafaelvianna.legalanalyzer.analysis.agents.RelatorioExecutivoAgent;
 import com.rafaelvianna.legalanalyzer.analysis.agents.ResumoAgent;
-import com.rafaelvianna.legalanalyzer.analysis.external.ExternalValidationTeam;
 import com.rafaelvianna.legalanalyzer.config.AppProperties;
 import com.rafaelvianna.legalanalyzer.exception.PdfProcessingException;
 import com.rafaelvianna.legalanalyzer.async.AnaliseStatus;
@@ -23,7 +22,16 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.List;
 
-/** Orquestra a análise documental e a validação externa da Equipe 3. */
+/**
+ * Orquestra a análise documental da Equipe 1 (extração, consolidação, resumo,
+ * inconsistências, evidências e relatório executivo).
+ *
+ * A Equipe 1 é intencionalmente independente da Equipe 3/DataJud: nem todo
+ * processo está indexado na base pública do CNJ, e uma falha ou indisponibilidade
+ * na consulta externa não pode derrubar a análise documental. A validação
+ * processual oficial roda somente depois, como etapa opcional da Equipe 3,
+ * orquestrada por AnaliseEspecializadaJobService.
+ */
 @Service
 public class LegalAnalysisOrchestrator {
     private static final int TAMANHO_AMOSTRA_TEXTO = 12_000;
@@ -36,7 +44,6 @@ public class LegalAnalysisOrchestrator {
     private final EvidenciaAgent evidenciaAgent;
     private final PerguntasAgent perguntasAgent;
     private final RelatorioExecutivoAgent relatorioExecutivoAgent;
-    private final ExternalValidationTeam externalValidationTeam;
     private final AppProperties properties;
 
     public LegalAnalysisOrchestrator(PdfTextChunker chunker,
@@ -47,7 +54,6 @@ public class LegalAnalysisOrchestrator {
                                      EvidenciaAgent evidenciaAgent,
                                      PerguntasAgent perguntasAgent,
                                      RelatorioExecutivoAgent relatorioExecutivoAgent,
-                                     ExternalValidationTeam externalValidationTeam,
                                      AppProperties properties) {
         this.chunker = chunker;
         this.extractionAgent = extractionAgent;
@@ -57,7 +63,6 @@ public class LegalAnalysisOrchestrator {
         this.evidenciaAgent = evidenciaAgent;
         this.perguntasAgent = perguntasAgent;
         this.relatorioExecutivoAgent = relatorioExecutivoAgent;
-        this.externalValidationTeam = externalValidationTeam;
         this.properties = properties;
     }
 
@@ -108,12 +113,7 @@ public class LegalAnalysisOrchestrator {
         progress.update(AnaliseStatus.ANALISANDO_EVIDENCIAS, 81, "Gerando perguntas de investigação", "Formulando perguntas a partir das inconsistências e do resumo.");
         List<String> perguntas = perguntasAgent.gerar(dadosConsolidados, inconsistencias, resumo);
 
-        // Equipe 3: uma única consulta oficial é distribuída aos seus agentes e
-        // a reunião compara o resultado externo com o contexto consolidado.
-        progress.update(AnaliseStatus.ANALISANDO_EVIDENCIAS, 86, "Validando no DataJud", "Equipe 3 confrontando a análise documental com dados processuais oficiais.");
-        ExternalValidationTeam.ExternalValidationResult validacaoExterna = externalValidationTeam.execute(textoCompleto, dadosConsolidados);
-
-        progress.update(AnaliseStatus.GERANDO_RELATORIO, 90, "Gerando relatório executivo", "Consolidando conclusões, recomendações e validação externa.");
+        progress.update(AnaliseStatus.GERANDO_RELATORIO, 90, "Gerando relatório executivo", "Consolidando conclusões e recomendações da análise documental.");
         RelatorioExecutivoDTO relatorioExecutivo = relatorioExecutivoAgent.gerar(
                 nomeArquivo, resumo, dadosConsolidados, inconsistencias, perguntas);
 
@@ -131,8 +131,7 @@ public class LegalAnalysisOrchestrator {
                 inconsistencias,
                 gruposEvidencia,
                 perguntas,
-                relatorioExecutivo,
-                validacaoExterna);
+                relatorioExecutivo);
     }
 
     private int progressoEntre(int inicio, int fim, int concluidos, int total) {
