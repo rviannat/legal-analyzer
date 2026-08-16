@@ -23,4 +23,6 @@ public class DataJudPesquisaController {
     public ResponseEntity<DataJudPesquisaResponse> pesquisarCpf(@RequestParam String cpf, @RequestParam(required = false) String tribunal) { return ResponseEntity.ok(service.pesquisarPorCpf(cpf, tribunal)); }
     @GetMapping("/processos/amostra")
     public ResponseEntity<DataJudPesquisaResponse> pesquisarAmostra(@RequestParam String codigoTribunal, @RequestParam String assunto, @RequestParam(defaultValue = "10") int tamanho) { return ResponseEntity.ok(service.pesquisarPorTribunalAssunto(codigoTribunal, assunto, tamanho)); }
+    @PostMapping("/processos/amostra/processar")
+    public ResponseEntity<AnaliseJobResponse> processarAmostra(@RequestParam String numeroProcesso) { return ResponseEntity.accepted().body(service.iniciarProcessamentoPorAmostra(numeroProcesso)); }
 }
