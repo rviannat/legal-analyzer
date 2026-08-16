@@ -47,7 +47,10 @@ public class AnaliseJobService {
     }
 
     public AnaliseJobResponse iniciar(MultipartFile arquivo) {
-        return iniciar(arquivo, null);
+        // PDFs gerados pelo DataJud usam o padrão processo-datajud-<CNJ>.pdf.
+        // O CNJ já foi validado pela API, portanto podemos propagá-lo para o
+        // job antes do início assíncrono, sem depender da extração textual.
+        return iniciar(arquivo, extrairCnjValidadoDoNome(arquivo.getOriginalFilename()));
     }
 
     /**
@@ -142,6 +145,16 @@ public class AnaliseJobService {
             try { persistenceService.atualizar(job.id(), job.numeroProcesso(), ProcessoEntity.Status.ERRO, job.progresso(), job.etapa(), job.mensagem()); }
             catch (Exception persistencia) { log.error("[PROCESSO:{}] PERSISTENCIA | falha ao salvar erro: {}", job.id(), persistencia.getMessage(), persistencia); }
         }
+    }
+
+    private String extrairCnjValidadoDoNome(String nome) {
+        if (nome == null || nome.isBlank()) return null;
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("processo-datajud-(\\d{20})\\.pdf", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(nome);
+        if (!matcher.matches()) return null;
+        String digits = matcher.group(1);
+        return digits.substring(0, 7) + "-" + digits.substring(7, 9) + "." + digits.substring(9, 13) + "." + digits.substring(13, 14) + "." + digits.substring(14, 16) + "." + digits.substring(16, 20);
     }
 
     private boolean cnjValido(String valor) {
