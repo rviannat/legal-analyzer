@@ -113,7 +113,7 @@ public class AnaliseEspecializadaJobService {
 
     private void processar(AnaliseEspecializadaJob job, AnaliseJob analiseBase, AnaliseEspecializadaRequest opcoes) {
         try {
-            var resultado = orchestrator.analisar(analiseBase.id(), analiseBase.nomeArquivo(), analiseBase.textoExtraido(), analiseBase.resultado(), opcoes,
+            var resultado = orchestrator.analisar(analiseBase.id(), analiseBase.numeroProcesso(), analiseBase.nomeArquivo(), analiseBase.textoExtraido(), analiseBase.resultado(), opcoes,
                     (status, progresso, etapa, mensagem) -> {
                         log.info("[PROCESSO:{}][EQUIPE_2] AGENTE/ETAPA | status={} | {}% | {} | {}", analiseBase.id(), status, progresso, etapa, mensagem);
                         job.atualizar(status, progresso, etapa, mensagem); persistirStatus(job);

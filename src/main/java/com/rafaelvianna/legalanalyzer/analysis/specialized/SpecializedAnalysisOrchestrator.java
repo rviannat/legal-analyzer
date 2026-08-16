@@ -50,7 +50,7 @@ public class SpecializedAnalysisOrchestrator {
     }
     public boolean pesquisaJuridicaHabilitada(){ return legalResearchAgent.disponivel(); }
 
-    public AnaliseEspecializadaResponse analisar(String analiseBaseId,String nomeArquivo,String textoExtraido,AnaliseProcessoResponse analiseBase,
+    public AnaliseEspecializadaResponse analisar(String analiseBaseId,String numeroProcesso,String nomeArquivo,String textoExtraido,AnaliseProcessoResponse analiseBase,
                                                   AnaliseEspecializadaRequest request,SpecializedProgressListener listener){
         AnaliseEspecializadaRequest opcoes=request==null?AnaliseEspecializadaRequest.padrao():request;
         List<String> agentesExecutados=new ArrayList<>(), avisos=new ArrayList<>();
@@ -84,7 +84,7 @@ public class SpecializedAnalysisOrchestrator {
         listener.updateRich(AnaliseEspecializadaStatus.MAPEANDO_PRAZOS,55,"Deadline Agent",4,TOTAL_AGENTES,"MAPPING_DEADLINES",
                 "Extraindo datas, eventos e prazos e comparando-os com as conclusões anteriores.",List.of("Análise Base","Document Agent","Process Agent","Contract Agent"),"Agenda será cruzada com os riscos identificados.");
         AgendaPrazosDTO agendaPrazos=executar("Deadline Agent",agentesExecutados,avisos,
-                ()->deadlineAgent.montarAgenda(analiseBase,amostraTexto+"\n\nRELATÓRIOS ANTERIORES:\n"+contextoContratual),
+                ()->deadlineAgent.montarAgenda(analiseBase,numeroProcesso,amostraTexto+"\n\nRELATÓRIOS ANTERIORES:\n"+contextoContratual),
                 ()->new AgendaPrazosDTO(List.of(),List.of(),List.of(),"Agenda de prazos não disponível: o Deadline Agent falhou."));
 
         String contextoPrazos=contextoAnterior(contexto,"Document Agent",classificacao,"Process Agent",analiseProcessual,"Contract Agent",analiseContratual,"Deadline Agent",agendaPrazos);

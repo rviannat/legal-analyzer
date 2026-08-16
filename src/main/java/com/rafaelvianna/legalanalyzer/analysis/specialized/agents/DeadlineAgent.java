@@ -34,8 +34,8 @@ public class DeadlineAgent {
         this.dataJudService = dataJudService;
     }
 
-    public AgendaPrazosDTO montarAgenda(AnaliseProcessoResponse analiseBase, String amostraTexto) {
-        String contextoDataJud = carregarContextoDataJud(analiseBase);
+    public AgendaPrazosDTO montarAgenda(AnaliseProcessoResponse analiseBase, String numeroProcesso, String amostraTexto) {
+        String contextoDataJud = carregarContextoDataJud(numeroProcesso);
         String prompt = SpecializedPromptTemplates.agendaPrazos(
                 jsonSupport.toJson(analiseBase.prazos()),
                 jsonSupport.toJson(analiseBase.cronologia()),
@@ -54,8 +54,7 @@ public class DeadlineAgent {
                 aviso);
     }
 
-    private String carregarContextoDataJud(AnaliseProcessoResponse analiseBase) {
-        String numeroProcesso = analiseBase == null ? null : analiseBase.numeroProcesso();
+    private String carregarContextoDataJud(String numeroProcesso) {
         if (numeroProcesso == null || numeroProcesso.isBlank() || "não identificado".equalsIgnoreCase(numeroProcesso)) {
             log.info("[DEADLINE_AGENT][DATAJUD] não consultado | CNJ não identificado");
             return "INFORMAÇÃO INDISPONÍVEL: não foi identificado número CNJ para consulta oficial.";
@@ -74,11 +73,11 @@ public class DeadlineAgent {
                     .map(this::formatarMovimento)
                     .collect(Collectors.joining("\n"));
             log.info("[DEADLINE_AGENT][DATAJUD] eventos recebidos | CNJ={} | tribunal={} | movimentos={} | classe={} | órgão={}",
-                    numeroProcesso, info.tribunal(), info.movimentos().size(), info.classe(), info.orgaoJulgador());
+                    numeroProcesso, info.tribunal(), info.movimentos().size(), info.classeProcessual(), info.orgaoJulgador());
 
             return "Status: " + info.status()
                     + "\nTribunal: " + safe(info.tribunal())
-                    + "\nClasse oficial: " + safe(info.classe())
+                    + "\nClasse oficial: " + safe(info.classeProcessual())
                     + "\nÓrgão julgador: " + safe(info.orgaoJulgador())
                     + "\nQuantidade de movimentações oficiais: " + info.movimentos().size()
                     + "\nMovimentações oficiais:\n" + (movimentos.isBlank() ? "nenhuma" : movimentos);
