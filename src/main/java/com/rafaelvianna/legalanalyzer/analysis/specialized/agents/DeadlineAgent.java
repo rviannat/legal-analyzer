@@ -22,7 +22,7 @@ public class DeadlineAgent {
     private static final Logger log = LoggerFactory.getLogger(DeadlineAgent.class);
     private static final String AVISO_PADRAO =
             "Prazos e datas extraídos do material analisado. A contagem processual deve ser conferida "
-            + "no sistema do tribunal e no CPC antes de qualquer providência.";
+                    + "no sistema do tribunal e no CPC antes de qualquer providência.";
 
     private final AiClient aiClient;
     private final AiJsonSupport jsonSupport;

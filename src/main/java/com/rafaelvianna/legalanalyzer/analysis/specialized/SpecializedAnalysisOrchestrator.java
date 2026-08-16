@@ -51,7 +51,7 @@ public class SpecializedAnalysisOrchestrator {
     public boolean pesquisaJuridicaHabilitada(){ return legalResearchAgent.disponivel(); }
 
     public AnaliseEspecializadaResponse analisar(String analiseBaseId,String numeroProcesso,String nomeArquivo,String textoExtraido,AnaliseProcessoResponse analiseBase,
-                                                  AnaliseEspecializadaRequest request,SpecializedProgressListener listener){
+                                                 AnaliseEspecializadaRequest request,SpecializedProgressListener listener){
         AnaliseEspecializadaRequest opcoes=request==null?AnaliseEspecializadaRequest.padrao():request;
         List<String> agentesExecutados=new ArrayList<>(), avisos=new ArrayList<>();
         String amostraTexto=amostra(textoExtraido), parteRepresentada=opcoes.parteRepresentadaOuNaoInformada(), contexto=opcoes.contextoOuVazio();
