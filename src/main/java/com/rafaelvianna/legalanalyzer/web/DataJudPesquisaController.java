@@ -111,22 +111,39 @@ public class DataJudPesquisaController {
     }
 
     private void preencherCnjValidado(String analiseId, String cnj) {
-        if (cnj == null || !cnj.matches("\\d{7}-\\d{2}\\.\\d{4}\\.\\d\\.\\d{2}\\.\\d{4}")) {
+        String cnjNormalizado = normalizarCnj(cnj);
+        if (cnjNormalizado == null) {
+            log.warn("[DATAJUD-CNJ:{}] CNJ FALLBACK ignorado | valor pesquisado inválido | valor={}", analiseId, cnj);
             return;
         }
         var job = analiseJobService.buscar(analiseId);
-        String atual = job.numeroProcesso();
-        if (atual != null && atual.matches("\\d{7}-\\d{2}\\.\\d{4}\\.\\d\\.\\d{2}\\.\\d{4}")) {
+        String atual = normalizarCnj(job.numeroProcesso());
+        if (atual != null) {
+            if (!atual.equals(job.numeroProcesso())) {
+                job.numeroProcesso(atual);
+                atualizarPersistencia(analiseId, job);
+            }
             return;
         }
-        job.numeroProcesso(cnj);
+        job.numeroProcesso(cnjNormalizado);
+        atualizarPersistencia(analiseId, job);
+        log.info("[DATAJUD-CNJ:{}] CNJ FALLBACK | PDF não forneceu CNJ extraível | usando CNJ validado pela pesquisa | CNJ={} | origem=DATAJUD", analiseId, cnjNormalizado);
+    }
+
+    private void atualizarPersistencia(String analiseId, com.rafaelvianna.legalanalyzer.async.AnaliseJob job) {
         processoPersistenceService.atualizar(
                 analiseId,
-                cnj,
+                job.numeroProcesso(),
                 ProcessoEntity.Status.valueOf(job.status().name()),
                 job.progresso(),
                 job.etapa(),
                 job.mensagem());
-        log.info("[DATAJUD-CNJ:{}] CNJ FALLBACK | PDF não forneceu CNJ extraível | usando CNJ validado pela pesquisa | CNJ={}", analiseId, cnj);
+    }
+
+    private String normalizarCnj(String valor) {
+        if (valor == null || valor.isBlank()) return null;
+        String digits = valor.replaceAll("\\D", "");
+        if (digits.length() != 20) return null;
+        return digits.substring(0, 7) + "-" + digits.substring(7, 9) + "." + digits.substring(9, 13) + "." + digits.substring(13, 14) + "." + digits.substring(14, 16) + "." + digits.substring(16, 20);
     }
 }
