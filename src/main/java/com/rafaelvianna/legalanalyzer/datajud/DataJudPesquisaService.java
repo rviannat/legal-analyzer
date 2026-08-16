@@ -46,8 +46,26 @@ public class DataJudPesquisaService {
     public DataJudInfo infoPorCnj(String numeroProcesso){return dataJudService.consultar(numeroProcesso);}
     public DataJudPesquisaResponse pesquisarCnj(String numeroProcesso){DataJudInfo info=infoPorCnj(numeroProcesso);return new DataJudPesquisaResponse(UUID.randomUUID().toString(),"CNJ",info.tribunal(),null,true,info.mensagem(),info.consultadoEm(),info,List.of(),0);}
     public AnaliseJobResponse iniciarProcessamentoPorCnj(String numeroProcesso){DataJudInfo info=infoPorCnj(numeroProcesso);return iniciarDataJud(info,"consulta CNJ");}
+    public AnaliseJobResponse iniciarProcessamentoPorAmostra(String numeroProcesso){
+        if(numeroProcesso==null||numeroProcesso.isBlank()) throw new IllegalArgumentException("O processo selecionado na amostra não possui número CNJ.");
+        log.info("DataJud amostra: processo selecionado para processamento | CNJ={}", numeroProcesso);
+        DataJudInfo info=infoPorCnj(numeroProcesso);
+        return iniciarDataJud(info,"pesquisa agregada tribunal + assunto");
+    }
     public AnaliseJobResponse iniciarProcessamentoPorCpf(String cpf,String tribunal){DataJudInfo info=infoPorCpf(cpf,tribunal);return iniciarDataJud(info,"consulta CPF");}
-    private AnaliseJobResponse iniciarDataJud(DataJudInfo info,String origem){if(info==null||!info.encontrado())throw new IllegalArgumentException("Processo não localizado no DataJud; o fluxo de análise não foi iniciado.");try{return analiseJobService.iniciar(new DataJudMultipartFile(gerarPdf(info),"processo-datajud-"+info.numeroProcesso()+".pdf"));}catch(Exception e){throw new IllegalStateException("Processo encontrado no DataJud, mas não foi possível iniciar a análise: "+e.getMessage(),e);}}
+    private AnaliseJobResponse iniciarDataJud(DataJudInfo info,String origem){
+        if(info==null||!info.encontrado())throw new IllegalArgumentException("Processo não localizado no DataJud; o fluxo de análise não foi iniciado.");
+        try{
+            log.info("DataJud: processo localizado | origem={} | CNJ={} | tribunal={} | movimentos={}",origem,info.numeroProcesso(),info.tribunal(),info.quantidadeMovimentos());
+            byte[] pdf=gerarPdf(info);
+            String nome="processo-datajud-"+info.numeroProcesso()+".pdf";
+            log.info("DataJud: PDF de origem gerado | origem={} | nome={} | bytes={}",origem,nome,pdf.length);
+            log.info("DataJud: persistindo processo antes de iniciar pipeline | CNJ={}",info.numeroProcesso());
+            AnaliseJobResponse job=analiseJobService.iniciar(new DataJudMultipartFile(pdf,nome));
+            log.info("DataJud: processo persistido e pipeline iniciado | origem={} | CNJ={} | analiseId={}",origem,info.numeroProcesso(),job.id());
+            return job;
+        }catch(Exception e){log.error("DataJud: falha ao iniciar pipeline | origem={} | CNJ={} | erro={}",origem,info.numeroProcesso(),e.getMessage(),e);throw new IllegalStateException("Processo encontrado no DataJud, mas não foi possível iniciar a análise: "+e.getMessage(),e);}
+    }
     private byte[] gerarPdf(DataJudInfo info)throws IOException{try(PDDocument doc=new PDDocument();ByteArrayOutputStream out=new ByteArrayOutputStream()){PDPage page=new PDPage(PDRectangle.A4);doc.addPage(page);try(PDPageContentStream s=new PDPageContentStream(doc,page,AppendMode.APPEND,false,true)){s.beginText();s.setFont(PDType1Font.HELVETICA,9);s.setLeading(12);s.newLineAtOffset(40,800);linha(s,"PROCESSO LOCALIZADO NO DATAJUD/CNJ");linha(s,"Numero CNJ: "+info.numeroProcesso());linha(s,"Tribunal: "+nvl(info.tribunal()));linha(s,"Grau: "+nvl(info.grau()));linha(s,"Classe: "+nvl(info.classeProcessual()));linha(s,"Orgao julgador: "+nvl(info.orgaoJulgador()));linha(s,"");linha(s,"MOVIMENTACOES OFICIAIS:");for(DataJudMovimento m:info.movimentos())linha(s,(m.dataHora()==null?"":m.dataHora())+" - "+nvl(m.nome()));s.endText();}doc.save(out);return out.toByteArray();}}
     private void linha(PDPageContentStream s,String t)throws IOException{s.showText(t.replaceAll("[^\\x20-\\x7E]"," "));s.newLine();}
     private String nvl(String v){return v==null?"nao informado":v;}
