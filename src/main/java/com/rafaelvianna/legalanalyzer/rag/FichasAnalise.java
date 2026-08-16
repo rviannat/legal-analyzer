@@ -13,8 +13,8 @@ import java.util.function.Function;
  * cru do PDF.
  *
  * Cada ficha é curta e autossuficiente, com um rótulo que diz de onde a
- * informação veio (ex.: "Análise — cronologia"), porque esse rótulo é o que o
- * advogado vê na citação.
+ * informação veio (ex.: "Análise — cronologia"), porque esse rótulo é o que
+ * o advogado vê na citação.
  */
 final class FichasAnalise {
 
@@ -55,7 +55,7 @@ final class FichasAnalise {
 
             adicionarLista(fichas, "Análise — pontos de atenção", base.inconsistencias(), i ->
                     "%s. Elementos em conflito: %s. Gravidade: %s. Recomendação: %s".formatted(
-                            texto(i.descricao()), texto(i.elementosConflitantes()),
+                            texto(i.descricao()), textoLista(i.elementosConflitantes()),
                             texto(i.gravidade()), texto(i.recomendacao())));
 
             adicionarLista(fichas, "Análise — evidências", base.gruposEvidencia(), g ->
@@ -133,7 +133,7 @@ final class FichasAnalise {
             }
 
             if (especializada.matrizEvidencias() != null) {
-                adicionarLista(fichas, "Especializada — matriz de evidências",
+                adicionarLista(fichas, "Especializada — matriz de evidências", 
                         especializada.matrizEvidencias().alegacoes(), a -> {
                             String docs = a.documentosSuporte() == null || a.documentosSuporte().isEmpty()
                                     ? "nenhum documento associado"
@@ -206,6 +206,17 @@ final class FichasAnalise {
 
     private static String texto(String valor) {
         return valor == null || valor.isBlank() ? "não identificado" : valor.trim();
+    }
+
+    private static String textoLista(List<String> valores) {
+        if (valores == null || valores.isEmpty()) {
+            return "não identificado";
+        }
+        return valores.stream()
+                .filter(v -> v != null && !v.isBlank())
+                .map(String::trim)
+                .reduce((a, b) -> a + "; " + b)
+                .orElse("não identificado");
     }
 
     private static List<String> nuloParaVazio(List<String> lista) {
