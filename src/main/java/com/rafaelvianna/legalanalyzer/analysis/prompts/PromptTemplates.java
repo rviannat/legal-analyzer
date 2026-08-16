@@ -108,9 +108,17 @@ public final class PromptTemplates {
                 Responda SOMENTE com um JSON no formato:
                 {
                   "inconsistencias": [
-                    { "descricao": "", "elementosConflitantes": "", "gravidade": "(alta|média|baixa)", "recomendacao": "" }
+                    { "descricao": "", "elementosConflitantes": ["", ""], "gravidade": "(alta|média|baixa)", "recomendacao": "" }
                   ]
                 }
+
+                REGRAS PARA "elementosConflitantes":
+                - Sempre retorne uma lista JSON de strings.
+                - Cada item deve representar um elemento concreto que entrou em conflito ou gerou a inconsistência.
+                - Para datas conflitantes, coloque cada data como um item separado da lista.
+                - Para nomes, documentos, valores ou alegações conflitantes, coloque cada elemento conflitante em um item separado.
+                - Se não houver elementos conflitantes identificáveis, retorne [].
+
                 Se não houver inconsistências relevantes, retorne uma lista vazia.
 
                 DADOS ESTRUTURADOS (JSON):
@@ -185,7 +193,6 @@ public final class PromptTemplates {
                     "proximosPassos": ["", ""],
                     "conclusao": ""
                   }
-                }
 
                 RESUMO DO PROCESSO:
                 %s
