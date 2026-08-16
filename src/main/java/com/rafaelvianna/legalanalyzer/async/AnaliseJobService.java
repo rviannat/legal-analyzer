@@ -47,15 +47,29 @@ public class AnaliseJobService {
     }
 
     public AnaliseJobResponse iniciar(MultipartFile arquivo) {
+        return iniciar(arquivo, null);
+    }
+
+    /**
+     * Inicia uma análise informando um CNJ que já foi validado por uma fonte
+     * externa, como o DataJud. O CNJ externo é usado somente como fallback:
+     * se o PDF trouxer um CNJ, o valor extraído do documento continua tendo
+     * prioridade; se não trouxer, preservamos o CNJ validado na pesquisa.
+     */
+    public AnaliseJobResponse iniciar(MultipartFile arquivo, String cnjValidado) {
         String nome = arquivo.getOriginalFilename() == null ? "processo.pdf" : arquivo.getOriginalFilename();
         final byte[] conteudo;
         try { conteudo = arquivo.getBytes(); }
         catch (Exception e) { throw new PdfProcessingException("Não foi possível preparar o PDF para processamento: " + e.getMessage(), e); }
         String id = UUID.randomUUID().toString();
         AnaliseJob job = new AnaliseJob(id, nome);
+        if (cnjValido(cnjValidado)) {
+            job.numeroProcesso(cnjValidado);
+            log.info("[PROCESSO:{}][EQUIPE_1] CNJ | recebido de fonte validada | CNJ={} | fallbackAtivo=true", id, cnjValidado);
+        }
         jobs.put(id, job);
         persistenceService.criar(id, nome, conteudo);
-        log.info("[PROCESSO:{}][EQUIPE_1] RECEBIDO | arquivo={} | bytes={} | persistido=true", id, nome, conteudo.length);
+        log.info("[PROCESSO:{}][EQUIPE_1] RECEBIDO | arquivo={} | bytes={} | persistido=true | cnjInicial={}", id, nome, conteudo.length, job.numeroProcesso());
         executor.execute(() -> processar(job, conteudo));
         return AnaliseJobResponse.status(job);
     }
@@ -85,7 +99,17 @@ public class AnaliseJobService {
             List<PaginaExtraida> paginas = pdfTextExtractionService.extractPages(conteudo, job.nomeArquivo());
             String texto = pdfTextExtractionService.extractText(conteudo, job.nomeArquivo());
             job.paginas(paginas); job.textoExtraido(texto);
-            job.numeroProcesso(ProcessoIndexService.numeroProcesso(paginas, texto));
+            String cnjExtraido = ProcessoIndexService.numeroProcesso(paginas, texto);
+            if (cnjValido(cnjExtraido)) {
+                job.numeroProcesso(cnjExtraido);
+                log.info("[PROCESSO:{}][EQUIPE_1] CNJ | encontrado no PDF | CNJ={} | origem=DOCUMENTO", job.id(), cnjExtraido);
+            } else if (cnjValido(job.numeroProcesso())) {
+                log.info("[PROCESSO:{}][EQUIPE_1] CNJ | não encontrado no PDF | usando CNJ previamente validado | CNJ={} | origem=DATAJUD", job.id(), job.numeroProcesso());
+            } else {
+                job.numeroProcesso("não identificado");
+                log.info("[PROCESSO:{}][EQUIPE_1] CNJ | não encontrado no PDF e nenhuma fonte externa disponível", job.id());
+            }
+            atualizar(job, AnaliseStatus.EXTRAINDO_PDF, 30, "Equipe 1 — PDF extraído", "Conteúdo extraído; CNJ validado ou identificado no documento.");
             log.info("[PROCESSO:{}][EQUIPE_1] PDF | páginas={} | caracteres={} | CNJ={}", job.id(), paginas.size(), texto == null ? 0 : texto.length(), job.numeroProcesso());
 
             atualizar(job, AnaliseStatus.ANALISANDO_PARTES, 35, "Equipe 1 — Analisando documento", "Identificando partes, cronologia, pedidos, decisões, prazos e documentos.");
@@ -102,7 +126,7 @@ public class AnaliseJobService {
             indexarComSeguranca(job, resultado);
             job.concluir(resultado);
             persistenceService.atualizar(job.id(), job.numeroProcesso(), ProcessoEntity.Status.CONCLUIDO, 100, "Equipe 1 concluída", "Análise documental concluída. Equipe 2 será iniciada em seguida.");
-            log.info("[PROCESSO:{}][EQUIPE_1] CONCLUÍDA | relatório persistido=true | bytes={}", job.id(), relatorio.length);
+            log.info("[PROCESSO:{}][EQUIPE_1] CONCLUÍDA | relatório persistido=true | bytes={} | CNJ={}", job.id(), relatorio.length, job.numeroProcesso());
 
             executor.execute(() -> {
                 try {
@@ -118,5 +142,9 @@ public class AnaliseJobService {
             try { persistenceService.atualizar(job.id(), job.numeroProcesso(), ProcessoEntity.Status.ERRO, job.progresso(), job.etapa(), job.mensagem()); }
             catch (Exception persistencia) { log.error("[PROCESSO:{}] PERSISTENCIA | falha ao salvar erro: {}", job.id(), persistencia.getMessage(), persistencia); }
         }
+    }
+
+    private boolean cnjValido(String valor) {
+        return valor != null && valor.matches("\\d{7}-\\d{2}\\.\\d{4}\\.\\d\\.\\d{2}\\.\\d{4}");
     }
 }
